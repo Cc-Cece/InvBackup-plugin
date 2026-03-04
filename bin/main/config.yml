@@ -20,6 +20,13 @@ max-snapshots: 20
 restore-request:
   # Days until a pending request expires (0 = never)
   expire-days: 7
+  # Seconds during which an accepted request can reopen Restore GUI.
+  # 0 = can only open once; >0 = can reopen within N seconds.
+  open-window-seconds: 0
+  # How /ib accept -> RestoreGui "Restore All" should handle overflow:
+  # drop: extra items that don't fit in the inventory will be dropped at player's feet.
+  # keep: extra items will NOT be restored and will remain available in future requests/GUI.
+  restore-all-overflow: drop
   # Whether to also match by player name when delivering queued requests.
   # true: if UUIDs changed (e.g. offline/online mode switch), requests with matching target-name
   #       will be migrated to the current UUID on join and still be delivered.

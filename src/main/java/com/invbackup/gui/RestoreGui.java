@@ -66,6 +66,9 @@ public class RestoreGui implements Listener {
         }
 
         boolean isAdmin = player.hasPermission("invbackup.admin");
+        // Track restored items/status per snapshot (by backup owner UUID),
+        // so reopening the GUI (even within open-window-seconds)不会重复给出
+        // 已经标记过的格子/状态。
         RestoredTracker tracker = plugin.getBackupManager()
                 .getTracker(targetUuid, snapshotId);
 
@@ -490,20 +493,233 @@ public class RestoreGui implements Listener {
                 player, "InvBackup", "CONSOLE", "auto",
                 "Pre-restore backup");
 
-        // Restore everything directly
-        String restoreLevel = session.config.contains("status") ? "full" : "minimal";
-        boolean success = plugin.getBackupManager().restoreFromConfig(
-                player, session.config, restoreLevel);
+        YamlConfiguration config = session.config;
+        if (config == null) {
+            player.sendMessage(plugin.getMessage("backup-not-found"));
+            return;
+        }
 
-        if (success) {
-            // Mark everything as restored
-            tracker.markAllRestored(36, 4,
-                    session.offhandItem != null,
-                    27);
+        String overflowMode = plugin.getConfig()
+                .getString("restore-request.restore-all-overflow", "drop")
+                .toLowerCase();
+        boolean dropOverflow = "drop".equals(overflowMode);
 
-            player.closeInventory();
-            activeSessions.remove(player.getUniqueId());
+        boolean anyRestored = false;
+        boolean anyFailed = false;
+
+        // Restore main inventory (slots 0-35) without overwriting existing items.
+        try {
+            if (config.contains("inventory.content")) {
+                ItemStack[] contents = SerializationUtil.itemStackArrayFromBase64(
+                        config.getString("inventory.content"));
+                for (int i = 0; i < Math.min(contents.length, 36); i++) {
+                    ItemStack item = contents[i];
+                    if (item == null) continue;
+
+                    if (!isAdmin && tracker.isSlotRestored(i)) {
+                        continue;
+                    }
+
+                    ItemStack toGive = item.clone();
+                    Map<Integer, ItemStack> leftovers =
+                            player.getInventory().addItem(toGive);
+
+                    if (leftovers.isEmpty()) {
+                        tracker.markSlotRestored(i);
+                        anyRestored = true;
+                    } else {
+                        if (dropOverflow) {
+                            for (ItemStack left : leftovers.values()) {
+                                if (left == null) continue;
+                                player.getWorld().dropItemNaturally(
+                                        player.getLocation(), left);
+                            }
+                            tracker.markSlotRestored(i);
+                            anyRestored = true;
+                        } else {
+                            anyFailed = true;
+                        }
+                    }
+                }
+            }
+
+            // Restore armor (boots[0], leggings[1], chestplate[2], helmet[3])
+            if (config.contains("inventory.armor")) {
+                ItemStack[] armor = SerializationUtil.itemStackArrayFromBase64(
+                        config.getString("inventory.armor"));
+                for (int armorIndex = 0; armor != null
+                        && armorIndex < Math.min(armor.length, 4); armorIndex++) {
+                    ItemStack item = armor[armorIndex];
+                    if (item == null) continue;
+
+                    if (!isAdmin && tracker.isArmorRestored(armorIndex)) {
+                        continue;
+                    }
+
+                    ItemStack[] currentArmor = player.getInventory().getArmorContents();
+                    ItemStack existing = currentArmor[armorIndex];
+
+                    if (existing != null && existing.getType() != Material.AIR) {
+                        Map<Integer, ItemStack> leftovers =
+                                player.getInventory().addItem(existing.clone());
+                        if (!leftovers.isEmpty()) {
+                            anyFailed = true;
+                            continue;
+                        }
+                    }
+
+                    currentArmor[armorIndex] = item.clone();
+                    player.getInventory().setArmorContents(currentArmor);
+                    tracker.markArmorRestored(armorIndex);
+                    anyRestored = true;
+                }
+            }
+
+            // Restore offhand
+            if (config.contains("inventory.offhand")) {
+                ItemStack[] offhandArr = SerializationUtil.itemStackArrayFromBase64(
+                        config.getString("inventory.offhand"));
+                if (offhandArr.length > 0 && offhandArr[0] != null) {
+                    if (!isAdmin && tracker.isOffhandRestored()) {
+                        // Already restored before.
+                    } else {
+                        ItemStack offhandItem = offhandArr[0].clone();
+                        ItemStack existing = player.getInventory().getItemInOffHand();
+                        if (existing != null && existing.getType() != Material.AIR) {
+                            Map<Integer, ItemStack> leftovers =
+                                    player.getInventory().addItem(existing.clone());
+                            if (!leftovers.isEmpty()) {
+                                anyFailed = true;
+                            } else {
+                                player.getInventory().setItemInOffHand(offhandItem);
+                                tracker.markOffhandRestored();
+                                anyRestored = true;
+                            }
+                        } else {
+                            player.getInventory().setItemInOffHand(offhandItem);
+                            tracker.markOffhandRestored();
+                            anyRestored = true;
+                        }
+                    }
+                }
+            }
+
+            // Restore ender chest directly (no overflow to main inventory)
+            if (config.contains("inventory.enderchest")) {
+                ItemStack[] ec = SerializationUtil.itemStackArrayFromBase64(
+                        config.getString("inventory.enderchest"));
+                player.getEnderChest().setContents(ec);
+                for (int i = 0; i < Math.min(ec.length, 27); i++) {
+                    if (ec[i] != null) {
+                        tracker.markEnderchestSlotRestored(i);
+                    }
+                }
+                anyRestored = true;
+            }
+        } catch (IOException e) {
+            player.sendMessage(plugin.getMessage("backup-not-found"));
+            return;
+        }
+
+        // Restore status if full snapshot
+        String restoreLevel = config.contains("status") ? "full" : "minimal";
+        if ("full".equalsIgnoreCase(restoreLevel) && config.contains("status")) {
+            restoreAllStatus(player, config, tracker, isAdmin);
+            anyRestored = true;
+        }
+
+        player.closeInventory();
+        activeSessions.remove(player.getUniqueId());
+
+        if (!anyRestored) {
+            player.sendMessage(plugin.getMessage("backup-not-found"));
+        } else if (!dropOverflow && anyFailed) {
+            // Partial restore due to lack of space; remaining items stay available.
+            player.sendMessage(plugin.getMessage("inventory-full"));
+        } else {
             player.sendMessage(plugin.getMessage("all-restored"));
+        }
+    }
+
+    private void restoreAllStatus(Player player, YamlConfiguration config,
+                                  RestoredTracker tracker, boolean isAdmin) {
+        // Health + saturation
+        if (config.contains("status.health")) {
+            player.setHealth(config.getDouble("status.health"));
+            if (config.contains("status.saturation")) {
+                player.setSaturation((float) config.getDouble("status.saturation"));
+            }
+            if (!isAdmin || !tracker.isStatusRestored("health")) {
+                tracker.markStatusRestored("health");
+            }
+        }
+
+        // Food
+        if (config.contains("status.food")) {
+            player.setFoodLevel(config.getInt("status.food"));
+            if (!isAdmin || !tracker.isStatusRestored("food")) {
+                tracker.markStatusRestored("food");
+            }
+        }
+
+        // Exp / level
+        if (config.contains("status.exp") || config.contains("status.level")) {
+            player.setExp((float) config.getDouble("status.exp", player.getExp()));
+            player.setLevel(config.getInt("status.level", player.getLevel()));
+            if (!isAdmin || !tracker.isStatusRestored("exp")) {
+                tracker.markStatusRestored("exp");
+            }
+        }
+
+        // Location
+        if (config.contains("status.location")) {
+            org.bukkit.World world = Bukkit.getWorld(
+                    config.getString("status.location.world", ""));
+            if (world != null) {
+                player.teleport(new Location(world,
+                        config.getDouble("status.location.x"),
+                        config.getDouble("status.location.y"),
+                        config.getDouble("status.location.z"),
+                        (float) config.getDouble("status.location.yaw"),
+                        (float) config.getDouble("status.location.pitch")));
+                if (!isAdmin || !tracker.isStatusRestored("location")) {
+                    tracker.markStatusRestored("location");
+                }
+            }
+        }
+
+        // Effects
+        if (config.contains("status.effects")) {
+            for (PotionEffect eff : player.getActivePotionEffects()) {
+                player.removePotionEffect(eff.getType());
+            }
+            for (String effectStr : config.getStringList("status.effects")) {
+                String[] parts = effectStr.split(":");
+                if (parts.length == 3) {
+                    PotionEffectType type = org.bukkit.Registry.EFFECT.get(
+                            NamespacedKey.minecraft(parts[0]));
+                    if (type != null) {
+                        player.addPotionEffect(new PotionEffect(type,
+                                Integer.parseInt(parts[1]),
+                                Integer.parseInt(parts[2])));
+                    }
+                }
+            }
+            if (!isAdmin || !tracker.isStatusRestored("effects")) {
+                tracker.markStatusRestored("effects");
+            }
+        }
+
+        // Gamemode
+        if (config.contains("status.gamemode")) {
+            try {
+                player.setGameMode(GameMode.valueOf(
+                        config.getString("status.gamemode")));
+                if (!isAdmin || !tracker.isStatusRestored("gamemode")) {
+                    tracker.markStatusRestored("gamemode");
+                }
+            } catch (IllegalArgumentException ignored) {
+            }
         }
     }
 
@@ -583,20 +799,42 @@ public class RestoreGui implements Listener {
         }
 
         // Determine restore level based on snapshot meta
-        String restoreLevel = ns.config != null && ns.config.contains("status")
-                ? "full" : "minimal";
+        // Instead of restoring directly, queue a restore request
+        // so the target player can restore themselves.
+        String targetUuid = target.getUniqueId().toString();
+        String targetName = target.getName();
 
-        boolean success = plugin.getBackupManager().restoreFromConfig(
-                target, ns.config, restoreLevel);
+        String adminName = admin.getName();
+        String adminUuid = admin.getUniqueId().toString();
+
+        // Determine snapshot id from meta if available
+        String snapshotId = ns.snapshotId;
+        if (snapshotId == null || snapshotId.isEmpty()) {
+            snapshotId = ns.config != null
+                    ? ns.config.getString("meta.snapshot-id", "")
+                    : "";
+        }
+
+        if (snapshotId == null || snapshotId.isEmpty()) {
+            admin.sendMessage(plugin.getMessage("backup-not-found"));
+            return;
+        }
+
+        plugin.getRequestManager().createRequestForTarget(
+                targetUuid, targetName, snapshotId, adminName, adminUuid);
+
         nameInputSessions.remove(admin.getUniqueId());
         admin.closeInventory();
 
-        if (success) {
-            admin.sendMessage(plugin.getMessage("backup-restored")
+        if (target.isOnline()) {
+            plugin.getRequestManager().notifyPlayer(target);
+            admin.sendMessage(plugin.getMessage("request-sent")
                     .replaceText(b -> b.matchLiteral("{player}")
                             .replacement(target.getName())));
         } else {
-            admin.sendMessage(plugin.getMessage("backup-not-found"));
+            admin.sendMessage(plugin.getMessage("request-sent-offline")
+                    .replaceText(b -> b.matchLiteral("{player}")
+                            .replacement(targetName)));
         }
     }
 
@@ -668,5 +906,6 @@ public class RestoreGui implements Listener {
 
     private static class NameInputSession {
         YamlConfiguration config;
+        String snapshotId;
     }
 }

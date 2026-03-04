@@ -27,11 +27,28 @@ public class RestoreRequestManager {
         pendingFolder.mkdirs();
     }
 
-    public RestoreRequest createRequest(String targetUuid, String targetName,
+    /**
+     * Create a restore request where the backup owner and the target player
+     * are the same UUID (normal case).
+     */
+    public RestoreRequest createRequestForTarget(String targetUuid, String targetName,
+                                                 String snapshotId, String requestedBy,
+                                                 String requestedByUuid) {
+        return createRequest(targetUuid, targetName,
+                targetUuid, targetName, snapshotId, requestedBy, requestedByUuid);
+    }
+
+    /**
+     * Create a restore request where the backup owned by (sourceUuid/sourceName)
+     * will be restored by targetUuid/targetName (can differ for cross-player restore).
+     */
+    public RestoreRequest createRequest(String sourceUuid, String sourceName,
+                                        String targetUuid, String targetName,
                                         String snapshotId, String requestedBy,
                                         String requestedByUuid) {
         RestoreRequest request = new RestoreRequest(
-                targetUuid, targetName, snapshotId, requestedBy, requestedByUuid);
+                sourceUuid, sourceName, targetUuid, targetName,
+                snapshotId, requestedBy, requestedByUuid);
 
         saveRequest(targetUuid, request);
         return request;
@@ -106,6 +123,9 @@ public class RestoreRequestManager {
                     // Re-save to correct file under same request-id
                     RestoreRequest req = new RestoreRequest();
                     req.requestId = sec.getString("request-id", key);
+                    req.sourceUuid = sec.getString("source-uuid",
+                            sec.getString("target-uuid", currentUuid));
+                    req.sourceName = sec.getString("source-name", targetName);
                     req.targetUuid = currentUuid;
                     req.targetName = currentName;
                     req.snapshotId = sec.getString("snapshot-id", "");
@@ -113,6 +133,7 @@ public class RestoreRequestManager {
                     req.requestedByUuid = sec.getString("requested-by-uuid", "");
                     req.timestamp = sec.getLong("timestamp", 0);
                     req.status = status;
+                    req.openExpiredAt = sec.getLong("open-expired-at", 0L);
 
                     saveRequest(currentUuid, req);
 
@@ -220,6 +241,9 @@ public class RestoreRequestManager {
 
             RestoreRequest req = new RestoreRequest();
             req.requestId = sec.getString("request-id", "");
+            req.sourceUuid = sec.getString("source-uuid",
+                    sec.getString("target-uuid", targetUuid));
+            req.sourceName = sec.getString("source-name", "");
             req.targetUuid = sec.getString("target-uuid", targetUuid);
             req.targetName = sec.getString("target-name", "");
             req.snapshotId = sec.getString("snapshot-id", "");
@@ -227,6 +251,7 @@ public class RestoreRequestManager {
             req.requestedByUuid = sec.getString("requested-by-uuid", "");
             req.timestamp = sec.getLong("timestamp", 0);
             req.status = sec.getString("status", "pending");
+            req.openExpiredAt = sec.getLong("open-expired-at", 0L);
 
             requests.add(req);
         }
@@ -245,6 +270,8 @@ public class RestoreRequestManager {
 
         String path = "requests." + request.requestId;
         config.set(path + ".request-id", request.requestId);
+        config.set(path + ".source-uuid", request.sourceUuid);
+        config.set(path + ".source-name", request.sourceName);
         config.set(path + ".target-uuid", request.targetUuid);
         config.set(path + ".target-name", request.targetName);
         config.set(path + ".snapshot-id", request.snapshotId);
@@ -252,6 +279,7 @@ public class RestoreRequestManager {
         config.set(path + ".requested-by-uuid", request.requestedByUuid);
         config.set(path + ".timestamp", request.timestamp);
         config.set(path + ".status", request.status);
+        config.set(path + ".open-expired-at", request.openExpiredAt);
 
         try {
             config.save(file);
@@ -286,8 +314,18 @@ public class RestoreRequestManager {
             if (sec == null) {
                 continue;
             }
-            if ("pending".equals(sec.getString("status"))
-                    && now - sec.getLong("timestamp", 0) > expireMs) {
+            String status = sec.getString("status");
+            long createdAt = sec.getLong("timestamp", 0);
+            long openExpiresAt = sec.getLong("open-expired-at", 0L);
+
+            boolean timeExpired = now - createdAt > expireMs;
+            boolean windowExpired = "accepted".equals(status)
+                    && openExpiresAt > 0L && now > openExpiresAt;
+
+            if ("pending".equals(status) && timeExpired) {
+                sec.set("status", "expired");
+                changed = true;
+            } else if (windowExpired) {
                 sec.set("status", "expired");
                 changed = true;
             }
@@ -299,6 +337,37 @@ public class RestoreRequestManager {
             } catch (IOException e) {
                 plugin.getLogger().log(Level.WARNING,
                         "Failed to clean expired requests", e);
+            }
+        }
+    }
+
+    /**
+     * Mark a request as accepted and set its reopen window deadline.
+     */
+    public void markAccepted(String targetUuid, String requestId, long openExpiredAt) {
+        File file = new File(pendingFolder, targetUuid + ".yml");
+        if (!file.exists()) {
+            return;
+        }
+
+        YamlConfiguration config = YamlConfiguration.loadConfiguration(file);
+        ConfigurationSection requests = config.getConfigurationSection("requests");
+        if (requests == null) {
+            return;
+        }
+
+        for (String key : requests.getKeys(false)) {
+            ConfigurationSection sec = requests.getConfigurationSection(key);
+            if (sec != null && requestId.equals(sec.getString("request-id"))) {
+                sec.set("status", "accepted");
+                sec.set("open-expired-at", openExpiredAt);
+                try {
+                    config.save(file);
+                } catch (IOException e) {
+                    plugin.getLogger().log(Level.WARNING,
+                            "Failed to update request status on accept", e);
+                }
+                return;
             }
         }
     }

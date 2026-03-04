@@ -237,20 +237,33 @@ public class PreviewGui implements Listener {
         viewer.closeInventory();
         activeSessions.remove(viewer.getUniqueId());
 
-        Player target = Bukkit.getPlayer(UUID.fromString(session.targetUuid));
-        if (target == null) {
-            viewer.sendMessage(plugin.getMessage("player-not-online"));
+        if (!viewer.hasPermission("invbackup.admin")) {
+            viewer.sendMessage(plugin.getMessage("no-permission"));
             return;
         }
 
-        boolean success = plugin.getBackupManager()
-                .restoreBackup(target, session.targetUuid, session.snapshotId, level);
-        if (success) {
-            viewer.sendMessage(plugin.getMessage("backup-restored")
+        UUID targetUuid = UUID.fromString(session.targetUuid);
+        final String resolvedName = plugin.getIdentityManager().resolveName(targetUuid);
+        final String targetName = resolvedName != null ? resolvedName : targetUuid.toString();
+
+        String adminName = viewer.getName();
+        String adminUuid = viewer.getUniqueId().toString();
+
+        // Queue a restore request instead of restoring immediately.
+        plugin.getRequestManager().createRequestForTarget(
+                targetUuid.toString(), targetName, session.snapshotId,
+                adminName, adminUuid);
+
+        Player target = Bukkit.getPlayer(targetUuid);
+        if (target != null && target.isOnline()) {
+            plugin.getRequestManager().notifyPlayer(target);
+            viewer.sendMessage(plugin.getMessage("request-sent")
                     .replaceText(b -> b.matchLiteral("{player}")
                             .replacement(target.getName())));
         } else {
-            viewer.sendMessage(plugin.getMessage("backup-not-found"));
+            viewer.sendMessage(plugin.getMessage("request-sent-offline")
+                    .replaceText(b -> b.matchLiteral("{player}")
+                            .replacement(targetName)));
         }
     }
 

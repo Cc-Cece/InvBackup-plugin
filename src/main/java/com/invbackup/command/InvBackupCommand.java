@@ -249,7 +249,7 @@ public class InvBackupCommand implements CommandExecutor {
                 ? p.getUniqueId().toString() : "CONSOLE";
         String targetName = resolvePlayerName(targetUuid);
 
-        plugin.getRequestManager().createRequest(
+        plugin.getRequestManager().createRequestForTarget(
                 targetUuid.toString(), targetName, snapshotId,
                 adminName, adminUuid);
 
@@ -338,19 +338,61 @@ public class InvBackupCommand implements CommandExecutor {
         if (args.length < 2) return;
 
         String requestId = args[1];
+        String playerUuid = player.getUniqueId().toString();
+
+        // Refresh expiry state first
+        plugin.getRequestManager().cleanExpired(playerUuid);
+
         RestoreRequest request = plugin.getRequestManager()
-                .findRequest(player.getUniqueId().toString(), requestId);
-        if (request == null || !"pending".equals(request.status)) {
+                .findRequest(playerUuid, requestId);
+        if (request == null) {
             player.sendMessage(plugin.getMessage("backup-not-found"));
             return;
         }
 
-        plugin.getRequestManager().updateRequestStatus(
-                player.getUniqueId().toString(), requestId, "accepted");
-        player.sendMessage(plugin.getMessage("request-accepted"));
+        if ("declined".equalsIgnoreCase(request.status)
+                || "expired".equalsIgnoreCase(request.status)) {
+            player.sendMessage(plugin.getMessage("request-expired"));
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+        int windowSeconds = plugin.getConfig()
+                .getInt("restore-request.open-window-seconds", 0);
+
+        if ("pending".equalsIgnoreCase(request.status)) {
+            long openExpiredAt = windowSeconds > 0
+                    ? now + windowSeconds * 1000L
+                    : now;
+            plugin.getRequestManager().markAccepted(
+                    playerUuid, requestId, openExpiredAt);
+            request.status = "accepted";
+            request.openExpiredAt = openExpiredAt;
+            player.sendMessage(plugin.getMessage("request-accepted"));
+        } else if ("accepted".equalsIgnoreCase(request.status)) {
+            long openExpiredAt = request.openExpiredAt;
+            if (windowSeconds == 0) {
+                // Only the first successful open is allowed
+                player.sendMessage(plugin.getMessage("request-used"));
+                return;
+            }
+            if (openExpiredAt > 0L && now > openExpiredAt) {
+                plugin.getRequestManager().updateRequestStatus(
+                        playerUuid, requestId, "expired");
+                player.sendMessage(plugin.getMessage("request-expired"));
+                return;
+            }
+            // Within the reopen window; proceed without changing status.
+        } else {
+            player.sendMessage(plugin.getMessage("backup-not-found"));
+            return;
+        }
+
+        String sourceUuid = request.sourceUuid != null && !request.sourceUuid.isEmpty()
+                ? request.sourceUuid : request.targetUuid;
 
         plugin.getRestoreGui().openRestoreGui(
-                player, request.targetUuid, request.snapshotId);
+                player, sourceUuid, request.snapshotId);
     }
 
     private void handleDecline(CommandSender sender, String[] args) {
