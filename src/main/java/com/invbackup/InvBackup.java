@@ -3,6 +3,7 @@ package com.invbackup;
 import com.invbackup.command.InvBackupCommand;
 import com.invbackup.command.InvBackupTabCompleter;
 import com.invbackup.gui.AdminGui;
+import com.invbackup.gui.BulkRestoreGui;
 import com.invbackup.gui.ImportConfirmGui;
 import com.invbackup.gui.PreviewGui;
 import com.invbackup.gui.RestoreGui;
@@ -30,6 +31,7 @@ public class InvBackup extends JavaPlugin implements Listener {
     private RestoreGui restoreGui;
     private AdminGui adminGui;
     private ImportConfirmGui importConfirmGui;
+    private BulkRestoreGui bulkRestoreGui;
     private int autoSaveTaskId = -1;
 
     @Override
@@ -46,6 +48,7 @@ public class InvBackup extends JavaPlugin implements Listener {
         restoreGui = new RestoreGui(this);
         adminGui = new AdminGui(this);
         importConfirmGui = new ImportConfirmGui(this);
+        bulkRestoreGui = new BulkRestoreGui(this);
 
         var cmd = getCommand("invbackup");
         if (cmd != null) {
@@ -58,6 +61,7 @@ public class InvBackup extends JavaPlugin implements Listener {
         getServer().getPluginManager().registerEvents(restoreGui, this);
         getServer().getPluginManager().registerEvents(adminGui, this);
         getServer().getPluginManager().registerEvents(importConfirmGui, this);
+        getServer().getPluginManager().registerEvents(bulkRestoreGui, this);
 
         startAutoSaveTask();
 
@@ -91,6 +95,7 @@ public class InvBackup extends JavaPlugin implements Listener {
         restoreGui.removeSession(p.getUniqueId());
         adminGui.removeSession(p.getUniqueId());
         importConfirmGui.removeSession(p.getUniqueId());
+        bulkRestoreGui.removeSession(p.getUniqueId());
     }
 
     @EventHandler
@@ -158,6 +163,10 @@ public class InvBackup extends JavaPlugin implements Listener {
 
     public ImportConfirmGui getImportConfirmGui() {
         return importConfirmGui;
+    }
+
+    public BulkRestoreGui getBulkRestoreGui() {
+        return bulkRestoreGui;
     }
 
     public Component getMessage(String key) {

@@ -156,6 +156,13 @@ public class AdminGui implements Listener {
             return;
         }
 
+        // Bulk restore button lives at SLOT_INFO + 1 on the player list page.
+        if (slot == SLOT_INFO + 1) {
+            activeSessions.remove(player.getUniqueId());
+            plugin.getBulkRestoreGui().open(player);
+            return;
+        }
+
         int index = session.page * PAGE_SIZE + slot;
         if (slot < PAGE_SIZE && index < session.uuidList.size()) {
             String uuid = session.uuidList.get(index);
@@ -215,12 +222,17 @@ public class AdminGui implements Listener {
                     Component.text(" ")));
         }
 
-        gui.setItem(SLOT_INFO, createItem(Material.PAPER,
-                plugin.getLanguageManager().getGuiMessage(
-                        "gui.common.page",
-                        "{page}", String.valueOf(page + 1),
-                        "{total}", String.valueOf(totalPages)
-                )));
+        Component info = plugin.getLanguageManager().getGuiMessage(
+                "gui.common.page",
+                "{page}", String.valueOf(page + 1),
+                "{total}", String.valueOf(totalPages)
+        );
+        gui.setItem(SLOT_INFO, createItem(Material.PAPER, info));
+
+        // Add a bulk restore button on the player list page (level 1)
+        // using the same nav row, next to page info.
+        gui.setItem(SLOT_INFO + 1, createItem(Material.EMERALD,
+                plugin.getLanguageManager().getGuiMessage("gui.admin.bulk-restore")));
 
         if (page > 0) {
             gui.setItem(SLOT_PREV, createItem(Material.ARROW,
