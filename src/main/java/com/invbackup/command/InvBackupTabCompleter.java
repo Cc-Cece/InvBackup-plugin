@@ -13,6 +13,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import java.io.File;
 
 public class InvBackupTabCompleter implements TabCompleter {
 
@@ -38,7 +39,7 @@ public class InvBackupTabCompleter implements TabCompleter {
             if (sender.hasPermission("invbackup.admin")) {
                 completions.addAll(Arrays.asList(
                         "gui", "saveall", "restore", "forcerestore",
-                        "delete", "import", "export", "migrate",
+                        "delete", "import", "export", "exportjson", "migrate",
                         "search", "reload"));
                 if (!completions.contains("list")) completions.add("list");
                 if (!completions.contains("preview")) completions.add("preview");
@@ -81,6 +82,30 @@ public class InvBackupTabCompleter implements TabCompleter {
                     if (sender.hasPermission("invbackup.admin")) {
                         completions.addAll(
                                 plugin.getBackupManager().listImportFolders());
+                    }
+                }
+                case "exportjson" -> {
+                    if (sender.hasPermission("invbackup.admin")) {
+                        File baseDir = new File(plugin.getDataFolder(), "json-tool");
+                        File importDir = new File(baseDir, "import");
+                        if (importDir.exists() && importDir.isDirectory()) {
+                            File[] children = importDir.listFiles();
+                            if (children != null) {
+                                for (File f : children) {
+                                    String name = f.getName();
+                                    if (f.isFile() && name.endsWith(".yml")) {
+                                        completions.add("file:" + name);
+                                    } else if (f.isDirectory()) {
+                                        completions.add("folder:" + name);
+                                    }
+                                }
+                            }
+                        }
+                        // Fallback prefixes to guide usage even when目录为空
+                        if (completions.isEmpty()) {
+                            completions.add("file:");
+                            completions.add("folder:");
+                        }
                     }
                 }
                 case "migrate", "search" -> {

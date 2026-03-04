@@ -14,6 +14,7 @@ import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 
+import java.io.File;
 import java.text.SimpleDateFormat;
 import java.util.Arrays;
 import java.util.Date;
@@ -50,6 +51,7 @@ public class InvBackupCommand implements CommandExecutor {
             case "saveall" -> handleSaveAll(sender, args);
             case "import" -> handleImport(sender, args);
             case "export" -> handleExport(sender, args);
+            case "exportjson" -> handleExportJson(sender, args);
             case "migrate" -> handleMigrate(sender, args);
             case "search" -> handleSearch(sender, args);
             case "gui" -> handleGui(sender);
@@ -517,6 +519,99 @@ public class InvBackupCommand implements CommandExecutor {
             } else {
                 sender.sendMessage(plugin.getMessage("export-no-data"));
             }
+        }
+    }
+
+    // ========== exportjson ==========
+
+    private void handleExportJson(CommandSender sender, String[] args) {
+        if (!sender.hasPermission("invbackup.admin")) {
+            sender.sendMessage(plugin.getMessage("no-permission"));
+            return;
+        }
+
+        if (args.length < 2) {
+            sender.sendMessage(Component.text(
+                    "Usage: /ib exportjson file:<uuid>.yml | folder:<name>",
+                    NamedTextColor.RED));
+            return;
+        }
+
+        String spec = args[1];
+        File baseDir = new File(plugin.getDataFolder(), "json-tool");
+        File importDir = new File(baseDir, "import");
+        File exportDir = new File(baseDir, "export");
+        importDir.mkdirs();
+        exportDir.mkdirs();
+
+        if (spec.startsWith("file:")) {
+            String name = spec.substring("file:".length());
+            if (!name.endsWith(".yml")) {
+                sender.sendMessage(Component.text(
+                        "For file: mode, please use file:<uuid>.yml",
+                        NamedTextColor.RED));
+                return;
+            }
+            File in = new File(importDir, name);
+            if (!in.exists() || !in.isFile()) {
+                sender.sendMessage(Component.text(
+                        "Input file not found under json-tool/import/: " + name,
+                        NamedTextColor.RED));
+                return;
+            }
+            File out = new File(exportDir, name.replace(".yml", ".json"));
+            boolean ok = plugin.getBackupManager().exportYamlFileToWebJson(in, out);
+            if (ok) {
+                sender.sendMessage(Component.text(
+                        "Exported to json-tool/export/" + out.getName(),
+                        NamedTextColor.GREEN));
+            } else {
+                sender.sendMessage(Component.text(
+                        "Failed to export JSON for " + name,
+                        NamedTextColor.RED));
+            }
+        } else if (spec.startsWith("folder:")) {
+            String folder = spec.substring("folder:".length());
+            if (folder.isEmpty()) {
+                sender.sendMessage(Component.text(
+                        "Usage: /ib exportjson folder:<name>",
+                        NamedTextColor.RED));
+                return;
+            }
+            File inFolder = new File(importDir, folder);
+            if (!inFolder.exists() || !inFolder.isDirectory()) {
+                sender.sendMessage(Component.text(
+                        "Input folder not found under json-tool/import/: " + folder,
+                        NamedTextColor.RED));
+                return;
+            }
+            File outFolder = new File(exportDir, folder);
+            outFolder.mkdirs();
+
+            File[] files = inFolder.listFiles((d, n) -> n.endsWith(".yml"));
+            if (files == null || files.length == 0) {
+                sender.sendMessage(Component.text(
+                        "No .yml files found in folder " + folder,
+                        NamedTextColor.RED));
+                return;
+            }
+
+            int success = 0;
+            for (File f : files) {
+                File out = new File(outFolder,
+                        f.getName().replace(".yml", ".json").replace(".yaml", ".json"));
+                if (plugin.getBackupManager().exportYamlFileToWebJson(f, out)) {
+                    success++;
+                }
+            }
+
+            sender.sendMessage(Component.text(
+                    "Exported " + success + " file(s) to json-tool/export/" + folder,
+                    success > 0 ? NamedTextColor.GREEN : NamedTextColor.RED));
+        } else {
+            sender.sendMessage(Component.text(
+                    "Usage: /ib exportjson file:<uuid>.yml | folder:<name>",
+                    NamedTextColor.RED));
         }
     }
 

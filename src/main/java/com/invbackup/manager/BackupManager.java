@@ -4,14 +4,18 @@ import com.invbackup.InvBackup;
 import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
+import org.bukkit.NamespacedKey;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
-import org.bukkit.NamespacedKey;
+import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.Material;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 
 import java.io.File;
 import java.io.IOException;
@@ -26,6 +30,9 @@ import java.util.Set;
 import java.util.HashMap;
 import java.util.UUID;
 import java.util.logging.Level;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 public class BackupManager {
 
@@ -727,6 +734,298 @@ public class BackupManager {
         public String key() {
             return targetUuid + "|" + snapshotId;
         }
+    }
+
+    // ========== Web JSON export helpers ==========
+
+    /**
+     * Export a single InvBackup/CM-compatible YAML file to a web-friendly JSON format.
+     *
+     * @param sourceFile Input YAML (history/current/import-style/CM)
+     * @param targetFile Output JSON file (will be overwritten)
+     * @return true on success
+     */
+    public boolean exportYamlFileToWebJson(File sourceFile, File targetFile) {
+        YamlConfiguration doc = YamlConfiguration.loadConfiguration(sourceFile);
+
+        // Determine player UUID and name
+        String playerUuid = doc.getString("player-uuid");
+        String fileBase = sourceFile.getName().replace(".yml", "").replace(".yaml", "");
+        if (playerUuid == null || playerUuid.isEmpty()) {
+            // Try snapshots.<id>.meta.target-uuid
+            ConfigurationSection snaps = doc.getConfigurationSection("snapshots");
+            if (snaps != null) {
+                for (String key : snaps.getKeys(false)) {
+                    String u = snaps.getString(key + ".meta.target-uuid");
+                    if (u != null && !u.isEmpty()) {
+                        playerUuid = u;
+                        break;
+                    }
+                }
+            }
+        }
+        if (playerUuid == null || playerUuid.isEmpty()) {
+            playerUuid = fileBase;
+        }
+
+        String playerName = doc.getString("player-name");
+        if (playerName == null || playerName.isEmpty()) {
+            // Try first snapshot meta.target
+            ConfigurationSection snaps = doc.getConfigurationSection("snapshots");
+            if (snaps != null) {
+                for (String key : snaps.getKeys(false)) {
+                    String n = snaps.getString(key + ".meta.target");
+                    if (n != null && !n.isEmpty()) {
+                        playerName = n;
+                        break;
+                    }
+                }
+            }
+        }
+        if (playerName == null || playerName.isEmpty()) {
+            playerName = plugin.getIdentityManager().resolveName(playerUuid);
+            if (playerName == null || playerName.isEmpty()) {
+                playerName = playerUuid.substring(0, Math.min(8, playerUuid.length()));
+            }
+        }
+
+        // Build snapshots list
+        List<Map<String, Object>> snapshots = new ArrayList<>();
+
+        if (doc.contains("snapshots")) {
+            ConfigurationSection snaps = doc.getConfigurationSection("snapshots");
+            if (snaps != null) {
+                for (String snapId : snaps.getKeys(false)) {
+                    ConfigurationSection sec = snaps.getConfigurationSection(snapId);
+                    if (sec == null) continue;
+                    snapshots.add(buildSnapshotJsonFromSection(sec, snapId, playerUuid, playerName));
+                }
+            }
+        } else {
+            // CM-style: top-level <gamemode>.content
+            for (String key : doc.getKeys(false)) {
+                if (doc.contains(key + ".content")) {
+                    YamlConfiguration cmConfig = doc;
+                    YamlConfiguration config = convertCmToConfig(playerUuid, cmConfig, key);
+                    if (config == null) continue;
+                    snapshots.add(buildSnapshotJsonFromFlatConfig(config, "CM_" + key, playerUuid, playerName));
+                }
+            }
+        }
+
+        Map<String, Object> root = new HashMap<>();
+        Map<String, Object> player = new HashMap<>();
+        player.put("uuid", playerUuid);
+        player.put("name", playerName);
+        root.put("player", player);
+        root.put("snapshots", snapshots);
+
+        try {
+            String json = toJson(root);
+            Path out = targetFile.toPath();
+            if (out.getParent() != null) {
+                Files.createDirectories(out.getParent());
+            }
+            Files.write(out, json.getBytes(StandardCharsets.UTF_8));
+            return true;
+        } catch (IOException e) {
+            plugin.getLogger().log(Level.SEVERE,
+                    "Failed to export web JSON for " + sourceFile.getName(), e);
+            return false;
+        }
+    }
+
+    private Map<String, Object> buildSnapshotJsonFromSection(ConfigurationSection sec,
+                                                             String snapId,
+                                                             String playerUuid,
+                                                             String playerName) {
+        YamlConfiguration flat = sectionToConfig(sec);
+        return buildSnapshotJsonFromFlatConfig(flat, snapId, playerUuid, playerName);
+    }
+
+    private Map<String, Object> buildSnapshotJsonFromFlatConfig(YamlConfiguration flat,
+                                                                String snapId,
+                                                                String playerUuid,
+                                                                String playerName) {
+        Map<String, Object> node = new HashMap<>();
+        node.put("id", snapId);
+
+        Map<String, Object> meta = new HashMap<>();
+        ConfigurationSection metaSec = flat.getConfigurationSection("meta");
+        if (metaSec != null) {
+            for (String k : metaSec.getKeys(false)) {
+                meta.put(k, metaSec.get(k));
+            }
+        }
+        // Ensure some basics
+        meta.putIfAbsent("target", playerName);
+        meta.putIfAbsent("target-uuid", playerUuid);
+        node.put("meta", meta);
+
+        Map<String, Object> invNode = new HashMap<>();
+        // content
+        String contentStr = flat.getString("inventory.content");
+        if (contentStr != null && !contentStr.isEmpty()) {
+            try {
+                ItemStack[] items = SerializationUtil.itemStackArrayFromBase64(contentStr);
+                List<Map<String, Object>> list = new ArrayList<>();
+                for (int i = 0; i < items.length; i++) {
+                    ItemStack it = items[i];
+                    if (it == null || it.getType() == Material.AIR) continue;
+                    list.add(itemToJson(it, i));
+                }
+                invNode.put("content", list);
+            } catch (IOException ignored) {
+            }
+        }
+        // armor
+        String armorStr = flat.getString("inventory.armor");
+        if (armorStr != null && !armorStr.isEmpty()) {
+            try {
+                ItemStack[] items = SerializationUtil.itemStackArrayFromBase64(armorStr);
+                List<Map<String, Object>> list = new ArrayList<>();
+                for (int i = 0; i < items.length; i++) {
+                    ItemStack it = items[i];
+                    if (it == null || it.getType() == Material.AIR) continue;
+                    list.add(itemToJson(it, i));
+                }
+                invNode.put("armor", list);
+            } catch (IOException ignored) {
+            }
+        }
+        // offhand
+        String offStr = flat.getString("inventory.offhand");
+        if (offStr != null && !offStr.isEmpty()) {
+            try {
+                ItemStack[] items = SerializationUtil.itemStackArrayFromBase64(offStr);
+                if (items.length > 0 && items[0] != null && items[0].getType() != Material.AIR) {
+                    invNode.put("offhand", itemToJson(items[0], 0));
+                }
+            } catch (IOException ignored) {
+            }
+        }
+        // ender chest
+        String ecStr = flat.getString("inventory.enderchest");
+        if (ecStr != null && !ecStr.isEmpty()) {
+            try {
+                ItemStack[] items = SerializationUtil.itemStackArrayFromBase64(ecStr);
+                List<Map<String, Object>> list = new ArrayList<>();
+                for (int i = 0; i < items.length; i++) {
+                    ItemStack it = items[i];
+                    if (it == null || it.getType() == Material.AIR) continue;
+                    list.add(itemToJson(it, i));
+                }
+                invNode.put("enderchest", list);
+            } catch (IOException ignored) {
+            }
+        }
+        node.put("inventory", invNode);
+
+        // status: copy flat status.* into a nested object
+        Map<String, Object> statusNode = new HashMap<>();
+        ConfigurationSection statusSec = flat.getConfigurationSection("status");
+        if (statusSec != null) {
+            for (String k : statusSec.getKeys(true)) {
+                if (!statusSec.isConfigurationSection(k)) {
+                    statusNode.put(k, statusSec.get(k));
+                }
+            }
+        }
+        node.put("status", statusNode);
+
+        return node;
+    }
+
+    private Map<String, Object> itemToJson(ItemStack it, int slot) {
+        Map<String, Object> obj = new HashMap<>();
+        obj.put("slot", slot);
+        NamespacedKey key = it.getType().getKey();
+        obj.put("id", key.toString());
+        obj.put("amount", it.getAmount());
+        ItemMeta meta = it.getItemMeta();
+        if (meta != null) {
+            if (meta.hasDisplayName() && meta.displayName() != null) {
+                obj.put("displayName", LegacyComponentSerializer.legacySection().serialize(meta.displayName()));
+            }
+            if (meta.hasLore() && meta.lore() != null) {
+                List<String> loreLines = new ArrayList<>();
+                for (Component c : meta.lore()) {
+                    loreLines.add(LegacyComponentSerializer.legacySection().serialize(c));
+                }
+                obj.put("lore", loreLines);
+            }
+            if (meta.hasEnchants()) {
+                Map<String, Integer> ench = new HashMap<>();
+                meta.getEnchants().forEach((enchantment, level) -> {
+                    ench.put(enchantment.getKey().toString(), level);
+                });
+                obj.put("enchantments", ench);
+            }
+        }
+        return obj;
+    }
+
+    /** Very small JSON writer for the limited structures we build here. */
+    private String toJson(Object value) {
+        if (value == null) return "null";
+        if (value instanceof String s) {
+            return "\"" + escapeJson(s) + "\"";
+        }
+        if (value instanceof Number || value instanceof Boolean) {
+            return String.valueOf(value);
+        }
+        if (value instanceof Map<?, ?> map) {
+            StringBuilder sb = new StringBuilder();
+            sb.append("{");
+            boolean first = true;
+            for (Map.Entry<?, ?> e : map.entrySet()) {
+                if (!(e.getKey() instanceof String)) continue;
+                if (!first) sb.append(",");
+                first = false;
+                sb.append("\"").append(escapeJson((String) e.getKey())).append("\":");
+                sb.append(toJson(e.getValue()));
+            }
+            sb.append("}");
+            return sb.toString();
+        }
+        if (value instanceof Iterable<?> it) {
+            StringBuilder sb = new StringBuilder();
+            sb.append("[");
+            boolean first = true;
+            for (Object v : it) {
+                if (!first) sb.append(",");
+                first = false;
+                sb.append(toJson(v));
+            }
+            sb.append("]");
+            return sb.toString();
+        }
+        // Fallback to string
+        return "\"" + escapeJson(String.valueOf(value)) + "\"";
+    }
+
+    private String escapeJson(String s) {
+        StringBuilder sb = new StringBuilder(s.length() + 16);
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '\"' -> sb.append("\\\"");
+                case '\\' -> sb.append("\\\\");
+                case '\b' -> sb.append("\\b");
+                case '\f' -> sb.append("\\f");
+                case '\n' -> sb.append("\\n");
+                case '\r' -> sb.append("\\r");
+                case '\t' -> sb.append("\\t");
+                default -> {
+                    if (c < 0x20) {
+                        sb.append(String.format("\\u%04x", (int) c));
+                    } else {
+                        sb.append(c);
+                    }
+                }
+            }
+        }
+        return sb.toString();
     }
 
     public List<ImportEntry> collectImportEntries(ImportSource source) {

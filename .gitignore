@@ -1,2 +1,5 @@
 .gradle/
 build/
+web-tool/
+bin/
+.idea/
