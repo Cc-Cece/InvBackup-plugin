@@ -110,6 +110,12 @@ gui:
       location-name: "Location"
       effects-name: "Effects"
       gamemode-name: "Gamemode"
+    name-input:
+      title: "&dEnter target player name"
+      placeholder: "&fType player name here"
+      name: "&dRestore by Name"
+      lore1: "&7Type a player name in the anvil"
+      lore2: "&7Confirm to restore this snapshot to that player"
   import:
     title: "&bImport Confirm &7({source})"
     info: "&fPage &e{page}&f/&e{total} &7| &fEntries: &e{entries} &7| &fSelected: &a{selected}"

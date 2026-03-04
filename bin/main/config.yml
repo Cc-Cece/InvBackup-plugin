@@ -20,3 +20,8 @@ max-snapshots: 20
 restore-request:
   # Days until a pending request expires (0 = never)
   expire-days: 7
+  # Whether to also match by player name when delivering queued requests.
+  # true: if UUIDs changed (e.g. offline/online mode switch), requests with matching target-name
+  #       will be migrated to the current UUID on join and still be delivered.
+  # false: only UUID must match; name will be ignored.
+  match-by-name: true

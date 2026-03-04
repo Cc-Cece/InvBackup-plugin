@@ -721,6 +721,9 @@ public class BackupManager {
         public String format; // "InvBackup" / "CreativeManager"
         public long timestamp;
 
+        /** Short, user-friendly label for display in GUIs (e.g. timestamp or "CM [SURVIVAL]"). */
+        public String displaySnapshot;
+
         public String key() {
             return targetUuid + "|" + snapshotId;
         }
@@ -785,9 +788,11 @@ public class BackupManager {
                     e.targetUuid = uuid;
                     e.targetName = sec.getString("meta.target",
                             fallbackName != null ? fallbackName : uuid);
+                    String keyId = key;
                     e.snapshotId = (source.type == ImportSourceType.FOLDER)
                             ? "import:" + source.name + ":" + key
                             : "importfile:" + source.name + ":" + key;
+                    e.displaySnapshot = keyId;
                     e.format = "InvBackup";
                     e.timestamp = sec.getLong("meta.timestamp", importFile.lastModified());
                     result.add(e);
@@ -803,6 +808,7 @@ public class BackupManager {
                     e.snapshotId = (source.type == ImportSourceType.FOLDER)
                             ? "import:" + source.name + ":cm:" + gm
                             : "importfile:" + source.name + ":cm:" + gm;
+                    e.displaySnapshot = "CM [" + gm + "]";
                     e.format = "CreativeManager";
                     e.timestamp = importFile.lastModified();
                     result.add(e);

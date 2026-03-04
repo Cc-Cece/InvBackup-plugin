@@ -274,7 +274,7 @@ public class ImportConfirmGui implements Listener {
         Component name = plugin.getLanguageManager().getGuiMessage(
                 "gui.import.entry.name",
                 "{player}", e.targetName,
-                "{snapshot}", e.snapshotId
+                "{snapshot}", e.displaySnapshot != null ? e.displaySnapshot : e.snapshotId
         );
 
         List<Component> lore = new ArrayList<>();

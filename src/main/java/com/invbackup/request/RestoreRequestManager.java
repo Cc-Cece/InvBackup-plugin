@@ -5,7 +5,6 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickEvent;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextDecoration;
-import org.bukkit.Bukkit;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
@@ -14,7 +13,6 @@ import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 
@@ -40,9 +38,15 @@ public class RestoreRequestManager {
     }
 
     public void notifyPlayer(Player player) {
-        List<RestoreRequest> pending = getPendingRequests(
-                player.getUniqueId().toString());
-        cleanExpired(player.getUniqueId().toString());
+        // Optionally migrate requests saved under a different UUID but targeting this name
+        // (e.g. offline/online UUID mode switches).
+        if (plugin.getConfig().getBoolean("restore-request.match-by-name", true)) {
+            migrateRequestsForPlayer(player);
+        }
+
+        String uuid = player.getUniqueId().toString();
+        cleanExpired(uuid);
+        List<RestoreRequest> pending = getPendingRequests(uuid);
 
         for (RestoreRequest req : pending) {
             if (!"pending".equals(req.status)) {
@@ -65,6 +69,67 @@ public class RestoreRequestManager {
                             "/invbackup decline " + req.requestId));
 
             player.sendMessage(msg.append(accept).append(decline));
+        }
+    }
+
+    /**
+     * If a restore request was saved under a different pending/<uuid>.yml but the
+     * request's target-name matches this player, migrate it to the correct file.
+     */
+    private void migrateRequestsForPlayer(Player player) {
+        String currentUuid = player.getUniqueId().toString();
+        String currentName = player.getName();
+        if (currentName == null || currentName.isEmpty()) return;
+
+        File currentFile = new File(pendingFolder, currentUuid + ".yml");
+
+        File[] files = pendingFolder.listFiles((dir, name) -> name.endsWith(".yml"));
+        if (files == null) return;
+
+        for (File file : files) {
+            if (file.equals(currentFile)) continue;
+
+            YamlConfiguration cfg = YamlConfiguration.loadConfiguration(file);
+            ConfigurationSection requests = cfg.getConfigurationSection("requests");
+            if (requests == null) continue;
+
+            boolean movedAny = false;
+            for (String key : new ArrayList<>(requests.getKeys(false))) {
+                ConfigurationSection sec = requests.getConfigurationSection(key);
+                if (sec == null) continue;
+
+                String targetName = sec.getString("target-name", "");
+                String status = sec.getString("status", "pending");
+                if (!"pending".equals(status)) continue;
+
+                if (currentName.equalsIgnoreCase(targetName)) {
+                    // Re-save to correct file under same request-id
+                    RestoreRequest req = new RestoreRequest();
+                    req.requestId = sec.getString("request-id", key);
+                    req.targetUuid = currentUuid;
+                    req.targetName = currentName;
+                    req.snapshotId = sec.getString("snapshot-id", "");
+                    req.requestedBy = sec.getString("requested-by", "");
+                    req.requestedByUuid = sec.getString("requested-by-uuid", "");
+                    req.timestamp = sec.getLong("timestamp", 0);
+                    req.status = status;
+
+                    saveRequest(currentUuid, req);
+
+                    // Remove from old file
+                    requests.set(key, null);
+                    movedAny = true;
+                }
+            }
+
+            if (movedAny) {
+                try {
+                    cfg.save(file);
+                } catch (IOException e) {
+                    plugin.getLogger().log(Level.WARNING,
+                            "Failed to save migrated pending file " + file.getName(), e);
+                }
+            }
         }
     }
 

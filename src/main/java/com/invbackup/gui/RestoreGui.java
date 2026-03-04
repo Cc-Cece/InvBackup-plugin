@@ -47,9 +47,11 @@ public class RestoreGui implements Listener {
     private static final int SLOT_GAMEMODE = 41;
     private static final int SLOT_ENDERCHEST = 42;
     private static final int SLOT_RESTORE_ALL = 44;
+    private static final int SLOT_NAME_INPUT = 43;
 
     private final InvBackup plugin;
     private final Map<UUID, RestoreSession> activeSessions = new HashMap<>();
+    private final Map<UUID, NameInputSession> nameInputSessions = new HashMap<>();
 
     public RestoreGui(InvBackup plugin) {
         this.plugin = plugin;
@@ -215,14 +217,29 @@ public class RestoreGui implements Listener {
                 plugin.getLanguageManager().getGuiMessage("gui.restore.enderchest.name"),
                 plugin.getLanguageManager().getGuiMessage("gui.restore.enderchest.lore")));
 
-        // Separators for slots 43
-        gui.setItem(43, createItem(Material.GRAY_STAINED_GLASS_PANE,
-                Component.text(" ")));
+        // Slot 43: optional manual name input (anvil)
+        if (isAdmin && plugin.getConfig().getBoolean("restore-request.manual-name-input.enabled", false)) {
+            gui.setItem(SLOT_NAME_INPUT, createItem(Material.NAME_TAG,
+                    plugin.getLanguageManager().getGuiMessage("gui.restore.name-input.name"),
+                    plugin.getLanguageManager().getGuiMessage("gui.restore.name-input.lore1"),
+                    plugin.getLanguageManager().getGuiMessage("gui.restore.name-input.lore2")));
+        } else {
+            gui.setItem(SLOT_NAME_INPUT, createItem(Material.GRAY_STAINED_GLASS_PANE,
+                    Component.text(" ")));
+        }
     }
 
     @EventHandler
     public void onInventoryClick(InventoryClickEvent event) {
         if (!(event.getWhoClicked() instanceof Player player)) {
+            return;
+        }
+
+        // Anvil name input handling
+        NameInputSession nameSession = nameInputSessions.get(player.getUniqueId());
+        if (nameSession != null &&
+                event.getView().getTopInventory().getType() == org.bukkit.event.inventory.InventoryType.ANVIL) {
+            handleNameInputClick(event, player, nameSession);
             return;
         }
 
@@ -286,6 +303,9 @@ public class RestoreGui implements Listener {
                     () -> openRestoreGui(player, session.targetUuid, session.snapshotId));
         } else if (slot == SLOT_RESTORE_ALL) {
             handleRestoreAll(player, session, tracker, isAdmin);
+        } else if (slot == SLOT_NAME_INPUT && isAdmin &&
+                plugin.getConfig().getBoolean("restore-request.manual-name-input.enabled", false)) {
+            openNameInputGui(player, session);
         }
     }
 
@@ -495,6 +515,10 @@ public class RestoreGui implements Listener {
         RestoreSession session = activeSessions.get(player.getUniqueId());
         if (session != null && event.getView().getTopInventory() == session.inventory) {
             event.setCancelled(true);
+            return;
+        }
+        if (nameInputSessions.containsKey(player.getUniqueId())) {
+            event.setCancelled(true);
         }
     }
 
@@ -505,10 +529,75 @@ public class RestoreGui implements Listener {
         if (session != null && event.getInventory() == session.inventory) {
             activeSessions.remove(player.getUniqueId());
         }
+        nameInputSessions.remove(player.getUniqueId());
     }
 
     public void removeSession(UUID playerId) {
         activeSessions.remove(playerId);
+        nameInputSessions.remove(playerId);
+    }
+
+    private void openNameInputGui(Player admin, RestoreSession session) {
+        Inventory anvil = Bukkit.createInventory(admin,
+                org.bukkit.event.inventory.InventoryType.ANVIL,
+                plugin.getLanguageManager().getGuiMessage("gui.restore.name-input.title"));
+
+        ItemStack paper = new ItemStack(Material.PAPER);
+        ItemMeta meta = paper.getItemMeta();
+        meta.displayName(plugin.getLanguageManager().getGuiMessage("gui.restore.name-input.placeholder"));
+        paper.setItemMeta(meta);
+        anvil.setItem(0, paper);
+
+        NameInputSession ns = new NameInputSession();
+        ns.config = session.config;
+        nameInputSessions.put(admin.getUniqueId(), ns);
+
+        admin.openInventory(anvil);
+    }
+
+    private void handleNameInputClick(InventoryClickEvent event,
+                                      Player admin,
+                                      NameInputSession ns) {
+        if (event.getRawSlot() != 2) {
+            // Only handle clicks on the output slot
+            return;
+        }
+        event.setCancelled(true);
+
+        ItemStack result = event.getCurrentItem();
+        if (result == null || !result.hasItemMeta()) {
+            return;
+        }
+        ItemMeta meta = result.getItemMeta();
+        Component display = meta.displayName();
+        String name = display != null ? net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText().serialize(display) : null;
+        if (name == null || name.isBlank()) {
+            admin.sendMessage(plugin.getMessage("player-not-found"));
+            return;
+        }
+
+        Player target = Bukkit.getPlayerExact(name.trim());
+        if (target == null) {
+            admin.sendMessage(plugin.getMessage("player-not-online"));
+            return;
+        }
+
+        // Determine restore level based on snapshot meta
+        String restoreLevel = ns.config != null && ns.config.contains("status")
+                ? "full" : "minimal";
+
+        boolean success = plugin.getBackupManager().restoreFromConfig(
+                target, ns.config, restoreLevel);
+        nameInputSessions.remove(admin.getUniqueId());
+        admin.closeInventory();
+
+        if (success) {
+            admin.sendMessage(plugin.getMessage("backup-restored")
+                    .replaceText(b -> b.matchLiteral("{player}")
+                            .replacement(target.getName())));
+        } else {
+            admin.sendMessage(plugin.getMessage("backup-not-found"));
+        }
     }
 
     private void event_setItem(Player player, int slot, ItemStack item) {
@@ -575,5 +664,9 @@ public class RestoreGui implements Listener {
             this.snapshotId = snapshotId;
             this.inventory = inventory;
         }
+    }
+
+    private static class NameInputSession {
+        YamlConfiguration config;
     }
 }

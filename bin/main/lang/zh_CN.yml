@@ -110,6 +110,12 @@ gui:
       location-name: "位置"
       effects-name: "效果"
       gamemode-name: "模式"
+    name-input:
+      title: "&d输入要恢复到的玩家名"
+      placeholder: "&f在此输入玩家名"
+      name: "&d按昵称恢复"
+      lore1: "&7在铁砧中输入玩家名"
+      lore2: "&7确认后将快照恢复到该玩家"
   import:
     title: "&b导入确认 &7({source})"
     info: "&f第 &e{page}&f/&e{total}&f 页 &7| &f条目: &e{entries} &7| &f已选: &a{selected}"

@@ -690,7 +690,10 @@ public class InvBackupCommand implements CommandExecutor {
         if (online != null) return online.getUniqueId();
 
         OfflinePlayer offline = Bukkit.getOfflinePlayer(name);
-        if (offline.hasPlayedBefore()) return offline.getUniqueId();
+        // In offline-mode servers, UUID is deterministic by name.
+        // We intentionally allow never-joined names to be resolved so restore requests
+        // can be queued and delivered when they eventually join.
+        if (offline.getUniqueId() != null) return offline.getUniqueId();
 
         try {
             return UUID.fromString(name);
