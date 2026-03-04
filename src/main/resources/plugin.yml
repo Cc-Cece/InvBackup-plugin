@@ -1,20 +1,26 @@
-main: ${PACKAGE}.${NAME}
+main: ${PACKAGE}.InvBackup
 name: ${NAME}
 version: "${VERSION}"
-api-version: "1.21.11"
-author: AUTHOR
-description: DESCRIPTION
+api-version: "1.21"
+author: InvBackup
+description: Player inventory backup and restore plugin
+
 commands:
-  ex:
-    description: Base command for EXAMPLE
-    usage: "For a list of commands, type /ex help"
-    aliases: example
+  invbackup:
+    description: Inventory backup management
+    usage: "/invbackup <save|list|preview|restore|gui|import|export|migrate|search|reload>"
+    aliases: [ib]
+
 permissions:
-  example.test:
-    description: DESCRIPTION
-    default: true
-  example.*:
-    description: Grants all other permissions
+  invbackup.save:
+    description: Backup own inventory
     default: false
+  invbackup.view:
+    description: View and preview own backups
+    default: false
+  invbackup.admin:
+    description: Full admin access (restore, delete, saveall, import, export, migrate, gui, etc.)
+    default: op
     children:
-      example.test: true
+      invbackup.save: true
+      invbackup.view: true

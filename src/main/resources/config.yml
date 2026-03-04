@@ -1,1 +1,22 @@
-# A journey of 1,000 lines starts with a single char
+# InvBackup Configuration
+
+# Language: zh_CN, en_US (or custom file in lang/ folder)
+language: zh_CN
+
+# Backup level: minimal (items only) or full (items + status)
+backup-level: full
+
+# Auto backup settings
+auto-backup:
+  on-quit: true
+  on-join: false
+  # Auto save interval in seconds (0 = disabled)
+  interval: 0
+
+# Maximum snapshots per player (0 = unlimited)
+max-snapshots: 20
+
+# Restore request settings
+restore-request:
+  # Days until a pending request expires (0 = never)
+  expire-days: 7
