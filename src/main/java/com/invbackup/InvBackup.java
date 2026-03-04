@@ -3,10 +3,12 @@ package com.invbackup;
 import com.invbackup.command.InvBackupCommand;
 import com.invbackup.command.InvBackupTabCompleter;
 import com.invbackup.gui.AdminGui;
+import com.invbackup.gui.ImportConfirmGui;
 import com.invbackup.gui.PreviewGui;
 import com.invbackup.gui.RestoreGui;
 import com.invbackup.manager.BackupManager;
 import com.invbackup.manager.LanguageManager;
+import com.invbackup.manager.PlayerIdentityManager;
 import com.invbackup.request.RestoreRequestManager;
 import io.papermc.lib.PaperLib;
 import net.kyori.adventure.text.Component;
@@ -23,9 +25,11 @@ public class InvBackup extends JavaPlugin implements Listener {
     private BackupManager backupManager;
     private RestoreRequestManager requestManager;
     private LanguageManager languageManager;
+    private PlayerIdentityManager identityManager;
     private PreviewGui previewGui;
     private RestoreGui restoreGui;
     private AdminGui adminGui;
+    private ImportConfirmGui importConfirmGui;
     private int autoSaveTaskId = -1;
 
     @Override
@@ -35,10 +39,13 @@ public class InvBackup extends JavaPlugin implements Listener {
 
         backupManager = new BackupManager(this);
         languageManager = new LanguageManager(this);
+        identityManager = new PlayerIdentityManager(this);
+        identityManager.reload();
         requestManager = new RestoreRequestManager(this);
         previewGui = new PreviewGui(this);
         restoreGui = new RestoreGui(this);
         adminGui = new AdminGui(this);
+        importConfirmGui = new ImportConfirmGui(this);
 
         var cmd = getCommand("invbackup");
         if (cmd != null) {
@@ -50,6 +57,7 @@ public class InvBackup extends JavaPlugin implements Listener {
         getServer().getPluginManager().registerEvents(previewGui, this);
         getServer().getPluginManager().registerEvents(restoreGui, this);
         getServer().getPluginManager().registerEvents(adminGui, this);
+        getServer().getPluginManager().registerEvents(importConfirmGui, this);
 
         startAutoSaveTask();
 
@@ -82,11 +90,13 @@ public class InvBackup extends JavaPlugin implements Listener {
         previewGui.removeSession(p.getUniqueId());
         restoreGui.removeSession(p.getUniqueId());
         adminGui.removeSession(p.getUniqueId());
+        importConfirmGui.removeSession(p.getUniqueId());
     }
 
     @EventHandler
     public void onPlayerJoin(PlayerJoinEvent event) {
         Player player = event.getPlayer();
+        identityManager.onJoin(player);
 
         if (getConfig().getBoolean("auto-backup.on-join", false)) {
             backupManager.saveBackup(
@@ -130,6 +140,10 @@ public class InvBackup extends JavaPlugin implements Listener {
         return languageManager;
     }
 
+    public PlayerIdentityManager getIdentityManager() {
+        return identityManager;
+    }
+
     public PreviewGui getPreviewGui() {
         return previewGui;
     }
@@ -140,6 +154,10 @@ public class InvBackup extends JavaPlugin implements Listener {
 
     public AdminGui getAdminGui() {
         return adminGui;
+    }
+
+    public ImportConfirmGui getImportConfirmGui() {
+        return importConfirmGui;
     }
 
     public Component getMessage(String key) {

@@ -52,8 +52,11 @@ public class AdminGui implements Listener {
                 (int) Math.ceil((double) uuidList.size() / PAGE_SIZE));
         page = Math.max(0, Math.min(page, totalPages - 1));
 
-        Component title = Component.text("InvBackup - Players ("
-                + (page + 1) + "/" + totalPages + ")", NamedTextColor.DARK_AQUA);
+        Component title = plugin.getLanguageManager().getGuiMessage(
+                "gui.admin.title-players",
+                "{page}", String.valueOf(page + 1),
+                "{total}", String.valueOf(totalPages)
+        );
         Inventory gui = Bukkit.createInventory(null, 54, title);
 
         int start = page * PAGE_SIZE;
@@ -70,6 +73,7 @@ public class AdminGui implements Listener {
         session.level = 1;
         session.page = page;
         session.uuidList = uuidList;
+        session.inventory = gui;
         activeSessions.put(viewer.getUniqueId(), session);
         viewer.openInventory(gui);
     }
@@ -85,8 +89,12 @@ public class AdminGui implements Listener {
         page = Math.max(0, Math.min(page, totalPages - 1));
 
         String playerName = resolvePlayerName(targetUuid);
-        Component title = Component.text("Backups: " + playerName + " ("
-                + (page + 1) + "/" + totalPages + ")", NamedTextColor.DARK_GREEN);
+        Component title = plugin.getLanguageManager().getGuiMessage(
+                "gui.admin.title-backups",
+                "{player}", playerName,
+                "{page}", String.valueOf(page + 1),
+                "{total}", String.valueOf(totalPages)
+        );
         Inventory gui = Bukkit.createInventory(null, 54, title);
 
         int start = page * PAGE_SIZE;
@@ -101,14 +109,15 @@ public class AdminGui implements Listener {
         fillNavRow(gui, page, totalPages);
 
         gui.setItem(SLOT_PREV, createItem(Material.ARROW,
-                Component.text("Back to Players", NamedTextColor.YELLOW)
-                        .decoration(TextDecoration.ITALIC, false)));
+                plugin.getLanguageManager().getGuiMessage(
+                        "gui.admin.back-to-players")));
 
         AdminSession session = new AdminSession();
         session.level = 2;
         session.page = page;
         session.selectedUuid = targetUuid;
         session.backups = backups;
+        session.inventory = gui;
         activeSessions.put(viewer.getUniqueId(), session);
         viewer.openInventory(gui);
     }
@@ -121,6 +130,8 @@ public class AdminGui implements Listener {
 
         AdminSession session = activeSessions.get(player.getUniqueId());
         if (session == null) return;
+
+        if (event.getView().getTopInventory() != session.inventory) return;
 
         event.setCancelled(true);
 
@@ -169,21 +180,25 @@ public class AdminGui implements Listener {
             BackupManager.BackupInfo info = session.backups.get(index);
             activeSessions.remove(player.getUniqueId());
             plugin.getPreviewGui().openPreview(
-                    player, session.selectedUuid, info.snapshotId);
+                    player, session.selectedUuid, info.snapshotId,
+                    () -> openBackupList(player, session.selectedUuid, session.page));
         }
     }
 
     @EventHandler
     public void onInventoryDrag(InventoryDragEvent event) {
         if (!(event.getWhoClicked() instanceof Player player)) return;
-        if (activeSessions.containsKey(player.getUniqueId())) {
+        AdminSession session = activeSessions.get(player.getUniqueId());
+        if (session != null && event.getView().getTopInventory() == session.inventory) {
             event.setCancelled(true);
         }
     }
 
     @EventHandler
     public void onInventoryClose(InventoryCloseEvent event) {
-        if (event.getPlayer() instanceof Player player) {
+        if (!(event.getPlayer() instanceof Player player)) return;
+        AdminSession session = activeSessions.get(player.getUniqueId());
+        if (session != null && event.getInventory() == session.inventory) {
             activeSessions.remove(player.getUniqueId());
         }
     }
@@ -201,20 +216,20 @@ public class AdminGui implements Listener {
         }
 
         gui.setItem(SLOT_INFO, createItem(Material.PAPER,
-                Component.text("Page " + (page + 1) + "/" + totalPages,
-                        NamedTextColor.WHITE)
-                        .decoration(TextDecoration.ITALIC, false)));
+                plugin.getLanguageManager().getGuiMessage(
+                        "gui.common.page",
+                        "{page}", String.valueOf(page + 1),
+                        "{total}", String.valueOf(totalPages)
+                )));
 
         if (page > 0) {
             gui.setItem(SLOT_PREV, createItem(Material.ARROW,
-                    Component.text("Previous Page", NamedTextColor.YELLOW)
-                            .decoration(TextDecoration.ITALIC, false)));
+                    plugin.getLanguageManager().getGuiMessage("gui.common.prev-page")));
         }
 
         if (page < totalPages - 1) {
             gui.setItem(SLOT_NEXT, createItem(Material.ARROW,
-                    Component.text("Next Page", NamedTextColor.YELLOW)
-                            .decoration(TextDecoration.ITALIC, false)));
+                    plugin.getLanguageManager().getGuiMessage("gui.common.next-page")));
         }
     }
 
@@ -233,15 +248,17 @@ public class AdminGui implements Listener {
         }
 
         List<Component> lore = new ArrayList<>();
-        lore.add(Component.text("UUID: " + uuid, NamedTextColor.GRAY)
-                .decoration(TextDecoration.ITALIC, false));
+        lore.add(plugin.getLanguageManager().getGuiMessage(
+                "gui.admin.player.uuid", "{uuid}", uuid));
 
         int count = plugin.getBackupManager()
                 .listBackups(uuid, null).size();
-        lore.add(Component.text(count + " backup(s)", NamedTextColor.AQUA)
-                .decoration(TextDecoration.ITALIC, false));
-        lore.add(Component.text("Click to view backups", NamedTextColor.YELLOW)
-                .decoration(TextDecoration.ITALIC, false));
+        lore.add(plugin.getLanguageManager().getGuiMessage(
+                "gui.admin.player.backup-count",
+                "{count}", String.valueOf(count)
+        ));
+        lore.add(plugin.getLanguageManager().getGuiMessage(
+                "gui.admin.player.click-view"));
 
         meta.lore(lore);
         head.setItemMeta(meta);
@@ -260,23 +277,20 @@ public class AdminGui implements Listener {
                 .decoration(TextDecoration.ITALIC, false));
 
         List<Component> lore = new ArrayList<>();
-        lore.add(Component.text("Time: " + time, NamedTextColor.GRAY)
-                .decoration(TextDecoration.ITALIC, false));
+        lore.add(plugin.getLanguageManager().getGuiMessage(
+                "gui.admin.backup.time", "{time}", time));
         if (!info.label.isEmpty()) {
-            lore.add(Component.text("Label: " + info.label,
-                    NamedTextColor.WHITE)
-                    .decoration(TextDecoration.ITALIC, false));
+            lore.add(plugin.getLanguageManager().getGuiMessage(
+                    "gui.admin.backup.label", "{label}", info.label));
         }
-        lore.add(Component.text("By: " + info.triggeredBy, NamedTextColor.GRAY)
-                .decoration(TextDecoration.ITALIC, false));
-        lore.add(Component.text("Type: " + info.triggerType,
-                NamedTextColor.GRAY)
-                .decoration(TextDecoration.ITALIC, false));
-        lore.add(Component.text("Level: " + info.backupLevel,
-                NamedTextColor.DARK_AQUA)
-                .decoration(TextDecoration.ITALIC, false));
-        lore.add(Component.text("Click to preview", NamedTextColor.GREEN)
-                .decoration(TextDecoration.ITALIC, false));
+        lore.add(plugin.getLanguageManager().getGuiMessage(
+                "gui.admin.backup.by", "{by}", info.triggeredBy));
+        lore.add(plugin.getLanguageManager().getGuiMessage(
+                "gui.admin.backup.type", "{type}", info.triggerType));
+        lore.add(plugin.getLanguageManager().getGuiMessage(
+                "gui.admin.backup.level", "{level}", info.backupLevel));
+        lore.add(plugin.getLanguageManager().getGuiMessage(
+                "gui.admin.backup.click-preview"));
 
         meta.lore(lore);
         item.setItemMeta(meta);
@@ -292,11 +306,8 @@ public class AdminGui implements Listener {
     }
 
     private String resolvePlayerName(String uuid) {
-        try {
-            OfflinePlayer op = Bukkit.getOfflinePlayer(UUID.fromString(uuid));
-            if (op.getName() != null) return op.getName();
-        } catch (Exception ignored) {
-        }
+        String mapped = plugin.getIdentityManager().resolveName(uuid);
+        if (mapped != null) return mapped;
         return uuid.substring(0, 8) + "...";
     }
 
@@ -306,5 +317,6 @@ public class AdminGui implements Listener {
         List<String> uuidList;
         String selectedUuid;
         List<BackupManager.BackupInfo> backups;
+        Inventory inventory;
     }
 }

@@ -2,15 +2,14 @@ package com.invbackup.manager;
 
 import com.invbackup.InvBackup;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.TextDecoration;
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import org.bukkit.configuration.file.YamlConfiguration;
 
 import java.io.File;
-import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
-import java.util.logging.Level;
 
 public class LanguageManager {
 
@@ -69,11 +68,37 @@ public class LanguageManager {
                 .deserialize(prefix + msg);
     }
 
+    /**
+     * GUI texts should NOT include the chat prefix.
+     * Supports simple {placeholder} replacements via string pairs.
+     * Example: getGuiMessage("gui.admin.title-players", "{page}","1","{total}","3")
+     */
+    public Component getGuiMessage(String key, String... replacements) {
+        String msg = langConfig.getString(key, key);
+        msg = applyReplacements(msg, replacements);
+        return LegacyComponentSerializer.legacyAmpersand()
+                .deserialize(msg)
+                .decoration(TextDecoration.ITALIC, false);
+    }
+
     public String getRawMessage(String key) {
         return langConfig.getString(key, key);
     }
 
     public String getCurrentLang() {
         return currentLang;
+    }
+
+    private static String applyReplacements(String msg, String... replacements) {
+        if (msg == null) return "";
+        if (replacements == null) return msg;
+        for (int i = 0; i + 1 < replacements.length; i += 2) {
+            String from = replacements[i];
+            String to = replacements[i + 1];
+            if (from != null && to != null) {
+                msg = msg.replace(from, to);
+            }
+        }
+        return msg;
     }
 }

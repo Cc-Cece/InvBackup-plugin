@@ -3,8 +3,6 @@ package com.invbackup.gui;
 import com.invbackup.InvBackup;
 import com.invbackup.manager.SerializationUtil;
 import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.format.NamedTextColor;
-import net.kyori.adventure.text.format.TextDecoration;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.configuration.file.YamlConfiguration;
@@ -29,6 +27,7 @@ import java.util.UUID;
 
 public class PreviewGui implements Listener {
 
+    private static final int SLOT_BACK = 36;
     private static final int SLOT_RESTORE_MINIMAL = 52;
     private static final int SLOT_RESTORE_FULL = 53;
     private static final int SLOT_ENDERCHEST = 51;
@@ -42,6 +41,10 @@ public class PreviewGui implements Listener {
     }
 
     public void openPreview(Player viewer, String targetUuid, String snapshotId) {
+        openPreview(viewer, targetUuid, snapshotId, null);
+    }
+
+    public void openPreview(Player viewer, String targetUuid, String snapshotId, Runnable onBack) {
         YamlConfiguration config = plugin.getBackupManager()
                 .loadBackupConfig(targetUuid, snapshotId);
         if (config == null) {
@@ -53,8 +56,11 @@ public class PreviewGui implements Listener {
         long timestamp = config.getLong("meta.timestamp", 0);
         String timeStr = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(timestamp));
 
-        Component title = Component.text("Backup: " + targetName + " | " + timeStr)
-                .color(NamedTextColor.DARK_AQUA);
+        Component title = plugin.getLanguageManager().getGuiMessage(
+                "gui.preview.title",
+                "{player}", targetName,
+                "{time}", timeStr
+        );
 
         Inventory gui = Bukkit.createInventory(null, 54, title);
 
@@ -73,7 +79,13 @@ public class PreviewGui implements Listener {
             // Row 5: Separator
             ItemStack separator = createItem(Material.GRAY_STAINED_GLASS_PANE,
                     Component.text(" "));
-            for (int i = 36; i < 45; i++) {
+            int sepStart = 36;
+            if (onBack != null) {
+                gui.setItem(SLOT_BACK, createItem(Material.ARROW,
+                        plugin.getLanguageManager().getGuiMessage("gui.common.back")));
+                sepStart = 37;
+            }
+            for (int i = sepStart; i < 45; i++) {
                 gui.setItem(i, separator);
             }
 
@@ -108,39 +120,31 @@ public class PreviewGui implements Listener {
             // Slot 51: Ender chest indicator
             if (config.contains("inventory.enderchest")) {
                 gui.setItem(SLOT_ENDERCHEST, createItem(Material.ENDER_CHEST,
-                        Component.text("Ender Chest", NamedTextColor.DARK_PURPLE)
-                                .decoration(TextDecoration.ITALIC, false),
-                        Component.text("Click to preview", NamedTextColor.GRAY)
-                                .decoration(TextDecoration.ITALIC, false)));
+                        plugin.getLanguageManager().getGuiMessage("gui.preview.enderchest.name"),
+                        plugin.getLanguageManager().getGuiMessage("gui.preview.enderchest.lore")));
             }
 
             // Slot 52: Restore items only button
             if (viewer.hasPermission("invbackup.admin")) {
                 gui.setItem(SLOT_RESTORE_MINIMAL, createItem(Material.YELLOW_WOOL,
-                        Component.text("Restore Items Only", NamedTextColor.YELLOW)
-                                .decoration(TextDecoration.ITALIC, false),
-                        Component.text("Only restores inventory", NamedTextColor.GRAY)
-                                .decoration(TextDecoration.ITALIC, false)));
+                        plugin.getLanguageManager().getGuiMessage("gui.preview.restore-items.name"),
+                        plugin.getLanguageManager().getGuiMessage("gui.preview.restore-items.lore")));
 
                 // Slot 53: Full restore button
                 if ("full".equals(config.getString("meta.backup-level"))) {
                     gui.setItem(SLOT_RESTORE_FULL, createItem(Material.LIME_WOOL,
-                            Component.text("Full Restore", NamedTextColor.GREEN)
-                                    .decoration(TextDecoration.ITALIC, false),
-                            Component.text("Restores items + status + location",
-                                    NamedTextColor.GRAY)
-                                    .decoration(TextDecoration.ITALIC, false)));
+                            plugin.getLanguageManager().getGuiMessage("gui.preview.full-restore.name"),
+                            plugin.getLanguageManager().getGuiMessage("gui.preview.full-restore.lore")));
                 }
             }
 
         } catch (IOException e) {
-            viewer.sendMessage(Component.text(
-                    "Failed to load backup data.", NamedTextColor.RED));
+            viewer.sendMessage(plugin.getMessage("backup-not-found"));
             return;
         }
 
         activeSessions.put(viewer.getUniqueId(),
-                new PreviewSession(targetUuid, snapshotId));
+                new PreviewSession(targetUuid, snapshotId, gui, onBack));
         viewer.openInventory(gui);
     }
 
@@ -155,13 +159,41 @@ public class PreviewGui implements Listener {
             return;
         }
 
+        if (event.getView().getTopInventory() != session.inventory) {
+            return;
+        }
+
         event.setCancelled(true);
 
         int slot = event.getRawSlot();
+        if (slot < 0 || slot >= event.getView().getTopInventory().getSize()) {
+            return; // Player clicked their own inventory area
+        }
+
+        // Back (only present when opened with onBack)
+        if (slot == SLOT_BACK && session.onBack != null) {
+            player.closeInventory();
+            activeSessions.remove(player.getUniqueId());
+            Bukkit.getScheduler().runTask(plugin, session.onBack);
+            return;
+        }
+
+        // Ender chest preview back (27 size preview)
+        if (event.getView().getTopInventory().getSize() == 27 && slot == 26) {
+            if (session.mainInventory != null) {
+                session.inventory = session.mainInventory;
+                player.openInventory(session.mainInventory);
+            } else if (session.onBack != null) {
+                player.closeInventory();
+                activeSessions.remove(player.getUniqueId());
+                Bukkit.getScheduler().runTask(plugin, session.onBack);
+            }
+            return;
+        }
 
         // Ender chest preview
         if (slot == SLOT_ENDERCHEST) {
-            openEnderChestPreview(player, session.targetUuid, session.snapshotId);
+            openEnderChestPreview(player, session.targetUuid, session.snapshotId, session.onBack);
             return;
         }
 
@@ -182,14 +214,17 @@ public class PreviewGui implements Listener {
         if (!(event.getWhoClicked() instanceof Player player)) {
             return;
         }
-        if (activeSessions.containsKey(player.getUniqueId())) {
+        PreviewSession session = activeSessions.get(player.getUniqueId());
+        if (session != null && event.getView().getTopInventory() == session.inventory) {
             event.setCancelled(true);
         }
     }
 
     @EventHandler
     public void onInventoryClose(InventoryCloseEvent event) {
-        if (event.getPlayer() instanceof Player player) {
+        if (!(event.getPlayer() instanceof Player player)) return;
+        PreviewSession session = activeSessions.get(player.getUniqueId());
+        if (session != null && event.getInventory() == session.inventory) {
             activeSessions.remove(player.getUniqueId());
         }
     }
@@ -220,14 +255,17 @@ public class PreviewGui implements Listener {
     }
 
     public void openEnderChestPreview(Player viewer, String targetUuid, String snapshotId) {
+        openEnderChestPreview(viewer, targetUuid, snapshotId, null);
+    }
+
+    public void openEnderChestPreview(Player viewer, String targetUuid, String snapshotId, Runnable onBack) {
         YamlConfiguration config = plugin.getBackupManager()
                 .loadBackupConfig(targetUuid, snapshotId);
         if (config == null || !config.contains("inventory.enderchest")) {
             return;
         }
 
-        Component title = Component.text("Ender Chest Preview")
-                .color(NamedTextColor.DARK_PURPLE);
+        Component title = plugin.getLanguageManager().getGuiMessage("gui.preview.enderchest-preview.title");
         Inventory gui = Bukkit.createInventory(null, 27, title);
 
         try {
@@ -239,12 +277,23 @@ public class PreviewGui implements Listener {
                 }
             }
         } catch (IOException e) {
-            viewer.sendMessage(Component.text(
-                    "Failed to load enderchest data.", NamedTextColor.RED));
+            viewer.sendMessage(plugin.getMessage("backup-not-found"));
             return;
         }
 
-        // Keep the session active for ender chest preview
+        // Switch the tracked inventory so clicks remain cancelled and
+        // we don't accidentally drop the session on inventory switch.
+        PreviewSession session = activeSessions.get(viewer.getUniqueId());
+        if (session == null) {
+            // Opened from external GUI (e.g. RestoreGui) - create a lightweight session
+            session = new PreviewSession(targetUuid, snapshotId, gui, onBack, null);
+            activeSessions.put(viewer.getUniqueId(), session);
+        } else {
+            session.inventory = gui;
+        }
+        // Add a back arrow (to main preview if present, otherwise to onBack)
+        gui.setItem(26, createItem(Material.ARROW,
+                plugin.getLanguageManager().getGuiMessage("gui.common.back")));
         viewer.openInventory(gui);
     }
 
@@ -262,23 +311,30 @@ public class PreviewGui implements Listener {
     private ItemStack createStatusItem(YamlConfiguration config) {
         ItemStack item = new ItemStack(Material.EXPERIENCE_BOTTLE);
         ItemMeta meta = item.getItemMeta();
-        meta.displayName(Component.text("Player Status", NamedTextColor.AQUA)
-                .decoration(TextDecoration.ITALIC, false));
+        meta.displayName(plugin.getLanguageManager().getGuiMessage("gui.preview.status.name"));
 
         List<Component> lore = new ArrayList<>();
-        lore.add(Component.text("Health: "
-                        + String.format("%.1f", config.getDouble("status.health", 0))
-                        + "/" + String.format("%.1f", config.getDouble("status.max-health", 20)),
-                NamedTextColor.RED).decoration(TextDecoration.ITALIC, false));
-        lore.add(Component.text("Food: " + config.getInt("status.food", 0),
-                NamedTextColor.GOLD).decoration(TextDecoration.ITALIC, false));
-        lore.add(Component.text("Level: " + config.getInt("status.level", 0),
-                NamedTextColor.GREEN).decoration(TextDecoration.ITALIC, false));
-        lore.add(Component.text("Exp: " + String.format("%.2f", config.getDouble("status.exp", 0)),
-                NamedTextColor.GREEN).decoration(TextDecoration.ITALIC, false));
-        lore.add(Component.text("Gamemode: "
-                        + config.getString("status.gamemode", "N/A"),
-                NamedTextColor.YELLOW).decoration(TextDecoration.ITALIC, false));
+        lore.add(plugin.getLanguageManager().getGuiMessage(
+                "gui.preview.status.health",
+                "{cur}", String.format("%.1f", config.getDouble("status.health", 0)),
+                "{max}", String.format("%.1f", config.getDouble("status.max-health", 20))
+        ));
+        lore.add(plugin.getLanguageManager().getGuiMessage(
+                "gui.preview.status.food",
+                "{food}", String.valueOf(config.getInt("status.food", 0))
+        ));
+        lore.add(plugin.getLanguageManager().getGuiMessage(
+                "gui.preview.status.level",
+                "{level}", String.valueOf(config.getInt("status.level", 0))
+        ));
+        lore.add(plugin.getLanguageManager().getGuiMessage(
+                "gui.preview.status.exp",
+                "{exp}", String.format("%.2f", config.getDouble("status.exp", 0))
+        ));
+        lore.add(plugin.getLanguageManager().getGuiMessage(
+                "gui.preview.status.gamemode",
+                "{gamemode}", config.getString("status.gamemode", "N/A")
+        ));
 
         if (config.contains("status.location")) {
             String loc = String.format("%.1f, %.1f, %.1f (%s)",
@@ -286,17 +342,20 @@ public class PreviewGui implements Listener {
                     config.getDouble("status.location.y"),
                     config.getDouble("status.location.z"),
                     config.getString("status.location.world", "?"));
-            lore.add(Component.text("Location: " + loc,
-                    NamedTextColor.GRAY).decoration(TextDecoration.ITALIC, false));
+            lore.add(plugin.getLanguageManager().getGuiMessage(
+                    "gui.preview.status.location",
+                    "{location}", loc
+            ));
         }
 
         List<String> effects = config.getStringList("status.effects");
         if (!effects.isEmpty()) {
-            lore.add(Component.text("Effects:", NamedTextColor.LIGHT_PURPLE)
-                    .decoration(TextDecoration.ITALIC, false));
+            lore.add(plugin.getLanguageManager().getGuiMessage("gui.preview.status.effects.header"));
             for (String effect : effects) {
-                lore.add(Component.text("  " + effect, NamedTextColor.WHITE)
-                        .decoration(TextDecoration.ITALIC, false));
+                lore.add(plugin.getLanguageManager().getGuiMessage(
+                        "gui.preview.status.effects.item",
+                        "{effect}", effect
+                ));
             }
         }
 
@@ -308,10 +367,20 @@ public class PreviewGui implements Listener {
     private static class PreviewSession {
         final String targetUuid;
         final String snapshotId;
+        Inventory inventory;
+        final Inventory mainInventory;
+        final Runnable onBack;
 
-        PreviewSession(String targetUuid, String snapshotId) {
+        PreviewSession(String targetUuid, String snapshotId, Inventory inventory, Runnable onBack) {
+            this(targetUuid, snapshotId, inventory, onBack, inventory);
+        }
+
+        PreviewSession(String targetUuid, String snapshotId, Inventory inventory, Runnable onBack, Inventory mainInventory) {
             this.targetUuid = targetUuid;
             this.snapshotId = snapshotId;
+            this.inventory = inventory;
+            this.mainInventory = mainInventory;
+            this.onBack = onBack;
         }
     }
 }

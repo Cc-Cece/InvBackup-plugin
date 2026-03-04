@@ -431,94 +431,46 @@ public class InvBackupCommand implements CommandExecutor {
             return;
         }
 
-        if (args.length < 2) {
-            // Show available import folders
-            List<String> folders = plugin.getBackupManager()
-                    .listImportFolders();
-            if (folders.isEmpty()) {
-                sender.sendMessage(plugin.getMessage("no-import-folders"));
-            } else {
-                sender.sendMessage(plugin.getMessage("import-folder-list"));
-                for (String folder : folders) {
-                    sender.sendMessage(Component.text("  " + folder,
-                            NamedTextColor.YELLOW));
-                }
-            }
+        if (!(sender instanceof Player viewer)) {
             sender.sendMessage(Component.text(
-                    "Usage: /ib import <folder> [player] [--by-name]",
+                    "This command can only be used by players.",
+                    NamedTextColor.RED));
+            return;
+        }
+
+        if (args.length < 2) {
+            sender.sendMessage(Component.text(
+                    "Usage: /ib import file:<name>.yml | folder:<name>",
                     NamedTextColor.GRAY));
             return;
         }
 
-        String folderName = args[1];
-        String triggerName = sender instanceof Player p
-                ? p.getName() : "Console";
-        String triggerUuid = sender instanceof Player p
-                ? p.getUniqueId().toString() : "CONSOLE";
-
-        // Check if folder exists
-        if (!plugin.getBackupManager().listImportFolders()
-                .contains(folderName)) {
-            sender.sendMessage(plugin.getMessage("import-folder-not-found")
-                    .replaceText(b -> b.matchLiteral("{folder}")
-                            .replacement(folderName)));
+        String spec = args[1];
+        BackupManager.ImportSource source = parseImportSource(spec);
+        if (source == null) {
+            viewer.sendMessage(Component.text(
+                    "Usage: /ib import file:<name>.yml | folder:<name>",
+                    NamedTextColor.RED));
             return;
         }
 
-        if (args.length == 2) {
-            // Import all from folder
-            int count = plugin.getBackupManager().importAllFromFolder(
-                    folderName, triggerName, triggerUuid);
-            sender.sendMessage(plugin.getMessage("import-success")
-                    .replaceText(b -> b.matchLiteral("{count}")
-                            .replacement(String.valueOf(count)))
-                    .replaceText(b -> b.matchLiteral("{folder}")
-                            .replacement(folderName)));
-        } else {
-            // Import specific player
-            boolean byName = false;
-            for (String arg : args) {
-                if ("--by-name".equals(arg)) {
-                    byName = true;
-                    break;
-                }
-            }
+        plugin.getImportConfirmGui().open(viewer, source);
+    }
 
-            String playerArg = args[2];
-
-            if (byName) {
-                // Resolve current UUID for the player name
-                UUID uuid = resolvePlayerUuid(playerArg);
-                if (uuid == null) {
-                    sender.sendMessage(
-                            plugin.getMessage("player-not-found"));
-                    return;
-                }
-                int count = plugin.getBackupManager().importToHistory(
-                        folderName, uuid.toString(), triggerName,
-                        triggerUuid, true, playerArg);
-                sender.sendMessage(plugin.getMessage("import-success")
-                        .replaceText(b -> b.matchLiteral("{count}")
-                                .replacement(String.valueOf(count)))
-                        .replaceText(b -> b.matchLiteral("{folder}")
-                                .replacement(folderName)));
-            } else {
-                UUID uuid = resolvePlayerUuid(playerArg);
-                if (uuid == null) {
-                    sender.sendMessage(
-                            plugin.getMessage("player-not-found"));
-                    return;
-                }
-                int count = plugin.getBackupManager().importToHistory(
-                        folderName, uuid.toString(),
-                        triggerName, triggerUuid);
-                sender.sendMessage(plugin.getMessage("import-success")
-                        .replaceText(b -> b.matchLiteral("{count}")
-                                .replacement(String.valueOf(count)))
-                        .replaceText(b -> b.matchLiteral("{folder}")
-                                .replacement(folderName)));
-            }
+    private BackupManager.ImportSource parseImportSource(String spec) {
+        if (spec == null) return null;
+        String s = spec.trim();
+        if (s.startsWith("file:")) {
+            String name = s.substring("file:".length());
+            if (!name.endsWith(".yml")) return null;
+            return new BackupManager.ImportSource(BackupManager.ImportSourceType.FILE, name);
         }
+        if (s.startsWith("folder:")) {
+            String name = s.substring("folder:".length());
+            if (name.isEmpty()) return null;
+            return new BackupManager.ImportSource(BackupManager.ImportSourceType.FOLDER, name);
+        }
+        return null;
     }
 
     // ========== export ==========
@@ -676,6 +628,7 @@ public class InvBackupCommand implements CommandExecutor {
 
         plugin.reloadConfig();
         plugin.getLanguageManager().reload();
+        plugin.getIdentityManager().reload();
         sender.sendMessage(plugin.getMessage("reload-success"));
     }
 
@@ -711,8 +664,8 @@ public class InvBackupCommand implements CommandExecutor {
                     "Preview any backup"));
             sender.sendMessage(helpLine("/ib delete <player> <id>",
                     "Delete a backup"));
-            sender.sendMessage(helpLine("/ib import [folder] [player] [--by-name]",
-                    "Import from folder"));
+            sender.sendMessage(helpLine("/ib import file:<name>.yml | folder:<name>",
+                    "Import with confirmation GUI"));
             sender.sendMessage(helpLine("/ib export <folder> [player]",
                     "Export backups"));
             sender.sendMessage(helpLine("/ib migrate <oldUUID> <newUUID>",
@@ -736,7 +689,6 @@ public class InvBackupCommand implements CommandExecutor {
         Player online = Bukkit.getPlayerExact(name);
         if (online != null) return online.getUniqueId();
 
-        @SuppressWarnings("deprecation")
         OfflinePlayer offline = Bukkit.getOfflinePlayer(name);
         if (offline.hasPlayedBefore()) return offline.getUniqueId();
 

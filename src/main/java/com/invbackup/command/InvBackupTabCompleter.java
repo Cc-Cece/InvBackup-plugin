@@ -1,7 +1,6 @@
 package com.invbackup.command;
 
 import com.invbackup.InvBackup;
-import com.invbackup.manager.BackupManager;
 import org.bukkit.Bukkit;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.command.Command;
@@ -68,8 +67,14 @@ public class InvBackupTabCompleter implements TabCompleter {
                 }
                 case "import" -> {
                     if (sender.hasPermission("invbackup.admin")) {
-                        completions.addAll(
-                                plugin.getBackupManager().listImportFolders());
+                        completions.add("file:");
+                        completions.add("folder:");
+                        for (String f : plugin.getBackupManager().listImportFiles()) {
+                            completions.add("file:" + f);
+                        }
+                        for (String folder : plugin.getBackupManager().listImportFolders()) {
+                            completions.add("folder:" + folder);
+                        }
                     }
                 }
                 case "export" -> {
@@ -169,7 +174,6 @@ public class InvBackupTabCompleter implements TabCompleter {
         Player player = Bukkit.getPlayerExact(name);
         if (player != null) return player.getUniqueId();
 
-        @SuppressWarnings("deprecation")
         OfflinePlayer offline = Bukkit.getOfflinePlayer(name);
         if (offline.hasPlayedBefore()) return offline.getUniqueId();
 

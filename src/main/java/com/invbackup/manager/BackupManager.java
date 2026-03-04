@@ -9,6 +9,7 @@ import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.NamespacedKey;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 
@@ -20,7 +21,9 @@ import java.util.Comparator;
 import java.util.Date;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.HashMap;
 import java.util.UUID;
 import java.util.logging.Level;
 
@@ -411,7 +414,8 @@ public class BackupManager {
         for (String effectStr : config.getStringList("status.effects")) {
             String[] parts = effectStr.split(":");
             if (parts.length == 3) {
-                PotionEffectType type = org.bukkit.Registry.EFFECT.match(parts[0]);
+                PotionEffectType type = org.bukkit.Registry.EFFECT.get(
+                        NamespacedKey.minecraft(parts[0]));
                 if (type != null) {
                     target.addPotionEffect(new PotionEffect(type,
                             Integer.parseInt(parts[1]),
@@ -496,6 +500,9 @@ public class BackupManager {
         if (snapshotId.startsWith("import:")) {
             return loadImportConfig(uuid, snapshotId);
         }
+        if (snapshotId.startsWith("importfile:")) {
+            return loadImportFileConfig(uuid, snapshotId);
+        }
 
         // History source
         File historyFile = new File(historyFolder, uuid + ".yml");
@@ -551,6 +558,32 @@ public class BackupManager {
             return sectionToConfig(sec);
         }
 
+        return null;
+    }
+
+    private YamlConfiguration loadImportFileConfig(String uuid, String snapshotId) {
+        // Format: "importfile:<fileName>.yml:<snapshotId>" or "importfile:<fileName>.yml:cm:<gamemode>"
+        String[] parts = snapshotId.split(":", 4);
+        if (parts.length < 3) return null;
+
+        String fileName = parts[1];
+        File importFile = new File(importsFolder, fileName);
+        if (!importFile.exists()) return null;
+
+        YamlConfiguration importConfig = YamlConfiguration.loadConfiguration(importFile);
+
+        // CM format: "importfile:<fileName>.yml:cm:<gamemode>"
+        if (parts.length == 4 && "cm".equals(parts[2])) {
+            String gamemode = parts[3];
+            return convertCmToConfig(uuid, importConfig, gamemode);
+        }
+
+        // InvBackup format: "importfile:<fileName>.yml:<snapshotId>"
+        String actualId = parts[2];
+        ConfigurationSection sec = importConfig.getConfigurationSection("snapshots." + actualId);
+        if (sec != null) {
+            return sectionToConfig(sec);
+        }
         return null;
     }
 
@@ -659,6 +692,201 @@ public class BackupManager {
 
     // ========== Import helpers ==========
 
+    public enum ImportSourceType {
+        FILE, FOLDER
+    }
+
+    public static class ImportSource {
+        public ImportSourceType type; // FILE or FOLDER
+        public String name; // FILE: "<name>.yml" ; FOLDER: "<folder>"
+
+        public ImportSource(ImportSourceType type, String name) {
+            this.type = type;
+            this.name = name;
+        }
+
+        public String displayName() {
+            return switch (type) {
+                case FILE -> "file:" + name;
+                case FOLDER -> "folder:" + name;
+            };
+        }
+    }
+
+    public static class ImportEntry {
+        public ImportSource source;
+        public String targetUuid;
+        public String targetName;
+        public String snapshotId; // "import:<folder>:..." or "importfile:<file>.yml:..."
+        public String format; // "InvBackup" / "CreativeManager"
+        public long timestamp;
+
+        public String key() {
+            return targetUuid + "|" + snapshotId;
+        }
+    }
+
+    public List<ImportEntry> collectImportEntries(ImportSource source) {
+        if (source == null) return List.of();
+        return switch (source.type) {
+            case FILE -> collectImportEntriesFromFile(source);
+            case FOLDER -> collectImportEntriesFromFolder(source);
+        };
+    }
+
+    private List<ImportEntry> collectImportEntriesFromFolder(ImportSource source) {
+        File importDir = new File(importsFolder, source.name);
+        if (!importDir.exists() || !importDir.isDirectory()) return List.of();
+
+        File[] files = importDir.listFiles((d, n) -> n.endsWith(".yml"));
+        if (files == null) return List.of();
+
+        List<ImportEntry> result = new ArrayList<>();
+        for (File f : files) {
+            String uuid = f.getName().replace(".yml", "");
+            if (!isUuid(uuid)) continue;
+            result.addAll(collectEntriesForPlayerFile(source, uuid, f));
+        }
+        return result;
+    }
+
+    private List<ImportEntry> collectImportEntriesFromFile(ImportSource source) {
+        File importFile = new File(importsFolder, source.name);
+        if (!importFile.exists() || !importFile.isFile()) return List.of();
+
+        String base = source.name.endsWith(".yml")
+                ? source.name.substring(0, source.name.length() - 4)
+                : source.name;
+
+        if (!isUuid(base)) {
+            // Only support "<uuid>.yml" single-player files for now
+            return List.of();
+        }
+
+        return collectEntriesForPlayerFile(source, base, importFile);
+    }
+
+    private List<ImportEntry> collectEntriesForPlayerFile(ImportSource source,
+                                                          String uuid,
+                                                          File importFile) {
+        List<ImportEntry> result = new ArrayList<>();
+        YamlConfiguration config = YamlConfiguration.loadConfiguration(importFile);
+        String fallbackName = plugin.getIdentityManager().resolveName(uuid);
+
+        if (config.contains("snapshots")) {
+            ConfigurationSection snapshots = config.getConfigurationSection("snapshots");
+            if (snapshots != null) {
+                for (String key : snapshots.getKeys(false)) {
+                    ConfigurationSection sec = snapshots.getConfigurationSection(key);
+                    if (sec == null) continue;
+
+                    ImportEntry e = new ImportEntry();
+                    e.source = source;
+                    e.targetUuid = uuid;
+                    e.targetName = sec.getString("meta.target",
+                            fallbackName != null ? fallbackName : uuid);
+                    e.snapshotId = (source.type == ImportSourceType.FOLDER)
+                            ? "import:" + source.name + ":" + key
+                            : "importfile:" + source.name + ":" + key;
+                    e.format = "InvBackup";
+                    e.timestamp = sec.getLong("meta.timestamp", importFile.lastModified());
+                    result.add(e);
+                }
+            }
+        } else {
+            for (String gm : config.getKeys(false)) {
+                if (config.contains(gm + ".content")) {
+                    ImportEntry e = new ImportEntry();
+                    e.source = source;
+                    e.targetUuid = uuid;
+                    e.targetName = fallbackName != null ? fallbackName : uuid;
+                    e.snapshotId = (source.type == ImportSourceType.FOLDER)
+                            ? "import:" + source.name + ":cm:" + gm
+                            : "importfile:" + source.name + ":cm:" + gm;
+                    e.format = "CreativeManager";
+                    e.timestamp = importFile.lastModified();
+                    result.add(e);
+                }
+            }
+        }
+
+        return result;
+    }
+
+    /**
+     * Import selected entries into history. Returns number of snapshots imported.
+     */
+    public int importEntriesToHistory(ImportSource source,
+                                      List<ImportEntry> entries,
+                                      String triggeredByName,
+                                      String triggeredByUuid) {
+        if (source == null || entries == null || entries.isEmpty()) return 0;
+        int count = 0;
+
+        Map<String, List<ImportEntry>> byUuid = new HashMap<>();
+        for (ImportEntry e : entries) {
+            byUuid.computeIfAbsent(e.targetUuid, k -> new ArrayList<>()).add(e);
+        }
+
+        for (Map.Entry<String, List<ImportEntry>> kv : byUuid.entrySet()) {
+            String uuid = kv.getKey();
+            for (ImportEntry e : kv.getValue()) {
+                YamlConfiguration snap = loadBackupConfig(uuid, e.snapshotId);
+                if (snap == null) continue;
+                if (appendSnapshotToHistory(uuid, snap, triggeredByName, triggeredByUuid, source.displayName())) {
+                    count++;
+                }
+            }
+        }
+
+        return count;
+    }
+
+    private boolean appendSnapshotToHistory(String uuid,
+                                           YamlConfiguration snap,
+                                           String triggeredByName,
+                                           String triggeredByUuid,
+                                           String labelSource) {
+        File historyFile = new File(historyFolder, uuid + ".yml");
+        YamlConfiguration history = historyFile.exists()
+                ? YamlConfiguration.loadConfiguration(historyFile)
+                : new YamlConfiguration();
+
+        String timestamp = new SimpleDateFormat("yyyy-MM-dd_HH-mm-ss").format(new Date());
+        String snapshotId = timestamp;
+        int counter = 1;
+        while (history.contains("snapshots." + snapshotId)) {
+            snapshotId = timestamp + "_" + counter;
+            counter++;
+        }
+
+        ConfigurationSection root = snap.getRoot();
+        if (root != null) {
+            for (String k : root.getKeys(false)) {
+                history.set("snapshots." + snapshotId + "." + k, root.get(k));
+            }
+        }
+
+        history.set("snapshots." + snapshotId + ".meta.trigger-type", "import");
+        history.set("snapshots." + snapshotId + ".meta.triggered-by", triggeredByName);
+        history.set("snapshots." + snapshotId + ".meta.triggered-by-uuid", triggeredByUuid);
+        history.set("snapshots." + snapshotId + ".meta.label", "Imported from " + labelSource);
+
+        history.set("player-uuid", uuid);
+        if (snap.contains("meta.target")) {
+            history.set("player-name", snap.getString("meta.target"));
+        }
+
+        try {
+            historyFile.getParentFile().mkdirs();
+            history.save(historyFile);
+            return true;
+        } catch (IOException e) {
+            plugin.getLogger().log(Level.SEVERE, "Failed to append imported snapshot", e);
+            return false;
+        }
+    }
+
     /**
      * List sub-folders in imports/ directory.
      */
@@ -671,6 +899,23 @@ public class BackupManager {
             }
         }
         return folders;
+    }
+
+    /**
+     * List .yml files directly under imports/ directory.
+     * Used for "file:<name>.yml" import sources.
+     */
+    public List<String> listImportFiles() {
+        List<String> files = new ArrayList<>();
+        File[] ymls = importsFolder.listFiles((d, name) -> name.endsWith(".yml"));
+        if (ymls != null) {
+            for (File f : ymls) {
+                if (f.isFile()) {
+                    files.add(f.getName());
+                }
+            }
+        }
+        return files;
     }
 
     /**

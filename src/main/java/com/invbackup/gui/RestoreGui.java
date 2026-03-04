@@ -1,7 +1,6 @@
 package com.invbackup.gui;
 
 import com.invbackup.InvBackup;
-import com.invbackup.manager.BackupManager;
 import com.invbackup.manager.RestoredTracker;
 import com.invbackup.manager.SerializationUtil;
 import net.kyori.adventure.text.Component;
@@ -11,6 +10,7 @@ import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -67,10 +67,10 @@ public class RestoreGui implements Listener {
         RestoredTracker tracker = plugin.getBackupManager()
                 .getTracker(targetUuid, snapshotId);
 
-        Component title = Component.text("Restore Backup", NamedTextColor.GREEN);
+        Component title = plugin.getLanguageManager().getGuiMessage("gui.restore.title");
         Inventory gui = Bukkit.createInventory(null, 54, title);
 
-        RestoreSession session = new RestoreSession(targetUuid, snapshotId);
+        RestoreSession session = new RestoreSession(targetUuid, snapshotId, gui);
 
         try {
             // Row 1-4: Inventory content (slots 0-35)
@@ -97,7 +97,6 @@ public class RestoreGui implements Listener {
                 ItemStack[] armor = SerializationUtil.itemStackArrayFromBase64(
                         config.getString("inventory.armor"));
                 // armor: boots[0], leggings[1], chestplate[2], helmet[3]
-                int[] armorSlots = {SLOT_BOOTS, SLOT_LEGS, SLOT_CHEST, SLOT_HELMET};
                 int[] displaySlots = {SLOT_HELMET, SLOT_CHEST, SLOT_LEGS, SLOT_BOOTS};
                 for (int i = 0; i < Math.min(armor.length, 4); i++) {
                     int displayIdx = 3 - i; // reverse for display
@@ -128,14 +127,9 @@ public class RestoreGui implements Listener {
 
             // Restore All button
             gui.setItem(SLOT_RESTORE_ALL, createItem(Material.EMERALD_BLOCK,
-                    Component.text("Restore All", NamedTextColor.GREEN)
-                            .decoration(TextDecoration.ITALIC, false),
-                    Component.text("One-click restore everything",
-                            NamedTextColor.GRAY)
-                            .decoration(TextDecoration.ITALIC, false),
-                    Component.text("(Auto-backs up current inventory)",
-                            NamedTextColor.DARK_GRAY)
-                            .decoration(TextDecoration.ITALIC, false)));
+                    plugin.getLanguageManager().getGuiMessage("gui.restore.restore-all.name"),
+                    plugin.getLanguageManager().getGuiMessage("gui.restore.restore-all.lore1"),
+                    plugin.getLanguageManager().getGuiMessage("gui.restore.restore-all.lore2")));
 
             // Fill remaining empty slots in row 6 with glass
             for (int i = 50; i < 54; i++) {
@@ -146,8 +140,7 @@ public class RestoreGui implements Listener {
             }
 
         } catch (IOException e) {
-            player.sendMessage(Component.text(
-                    "Failed to load backup data.", NamedTextColor.RED));
+            player.sendMessage(plugin.getMessage("backup-not-found"));
             return;
         }
 
@@ -159,59 +152,68 @@ public class RestoreGui implements Listener {
     private void fillStatusButtons(Inventory gui, YamlConfiguration config,
                                    RestoredTracker tracker, boolean isAdmin) {
         boolean hasFull = config.contains("status");
+        String na = plugin.getLanguageManager().getRawMessage("gui.common.na");
 
         // Health
         gui.setItem(SLOT_HEALTH, createStatusButton(
-                Material.RED_DYE, "Health",
+                Material.RED_DYE,
+                plugin.getLanguageManager().getGuiMessage("gui.restore.status.health"),
                 hasFull ? String.format("%.1f/%.1f",
                         config.getDouble("status.health", 0),
-                        config.getDouble("status.max-health", 20)) : "N/A",
+                        config.getDouble("status.max-health", 20)) : na,
                 "health", tracker, isAdmin));
 
         // Food
         gui.setItem(SLOT_FOOD, createStatusButton(
-                Material.BREAD, "Food",
-                hasFull ? String.valueOf(config.getInt("status.food", 0)) : "N/A",
+                Material.BREAD,
+                plugin.getLanguageManager().getGuiMessage("gui.restore.status.food"),
+                hasFull ? String.valueOf(config.getInt("status.food", 0)) : na,
                 "food", tracker, isAdmin));
 
         // Exp
         gui.setItem(SLOT_EXP, createStatusButton(
-                Material.EXPERIENCE_BOTTLE, "Experience",
-                hasFull ? "Level " + config.getInt("status.level", 0) : "N/A",
+                Material.EXPERIENCE_BOTTLE,
+                plugin.getLanguageManager().getGuiMessage("gui.restore.status.exp"),
+                hasFull ? plugin.getLanguageManager().getRawMessage("gui.restore.status.exp-value")
+                        .replace("{level}", String.valueOf(config.getInt("status.level", 0)))
+                        : na,
                 "exp", tracker, isAdmin));
 
         // Location
-        String locStr = "N/A";
+        String locStr = na;
         if (config.contains("status.location")) {
             locStr = String.format("%.0f, %.0f, %.0f",
                     config.getDouble("status.location.x"),
                     config.getDouble("status.location.y"),
                     config.getDouble("status.location.z"));
         }
+        if (!hasFull) locStr = na;
         gui.setItem(SLOT_LOCATION, createStatusButton(
-                Material.COMPASS, "Location", locStr,
+                Material.COMPASS,
+                plugin.getLanguageManager().getGuiMessage("gui.restore.status.location"),
+                locStr,
                 "location", tracker, isAdmin));
 
         // Effects
         gui.setItem(SLOT_EFFECTS, createStatusButton(
-                Material.POTION, "Effects",
-                hasFull ? config.getStringList("status.effects").size() + " effect(s)"
-                        : "N/A",
+                Material.POTION,
+                plugin.getLanguageManager().getGuiMessage("gui.restore.status.effects"),
+                hasFull ? plugin.getLanguageManager().getRawMessage("gui.restore.status.effects-value")
+                        .replace("{count}", String.valueOf(config.getStringList("status.effects").size()))
+                        : na,
                 "effects", tracker, isAdmin));
 
         // Gamemode
         gui.setItem(SLOT_GAMEMODE, createStatusButton(
-                Material.COMMAND_BLOCK, "Gamemode",
-                hasFull ? config.getString("status.gamemode", "N/A") : "N/A",
+                Material.COMMAND_BLOCK,
+                plugin.getLanguageManager().getGuiMessage("gui.restore.status.gamemode"),
+                hasFull ? config.getString("status.gamemode", na) : na,
                 "gamemode", tracker, isAdmin));
 
         // Enderchest
         gui.setItem(SLOT_ENDERCHEST, createItem(Material.ENDER_CHEST,
-                Component.text("Ender Chest", NamedTextColor.DARK_PURPLE)
-                        .decoration(TextDecoration.ITALIC, false),
-                Component.text("Click to open ender chest restore",
-                        NamedTextColor.GRAY)
-                        .decoration(TextDecoration.ITALIC, false)));
+                plugin.getLanguageManager().getGuiMessage("gui.restore.enderchest.name"),
+                plugin.getLanguageManager().getGuiMessage("gui.restore.enderchest.lore")));
 
         // Separators for slots 43
         gui.setItem(43, createItem(Material.GRAY_STAINED_GLASS_PANE,
@@ -226,6 +228,10 @@ public class RestoreGui implements Listener {
 
         RestoreSession session = activeSessions.get(player.getUniqueId());
         if (session == null) {
+            return;
+        }
+
+        if (event.getView().getTopInventory() != session.inventory) {
             return;
         }
 
@@ -273,8 +279,11 @@ public class RestoreGui implements Listener {
             handleStatusRestore(player, session, tracker, "gamemode", isAdmin);
         } else if (slot == SLOT_ENDERCHEST) {
             // Open ender chest sub-GUI (future: could be interactive too)
+            activeSessions.remove(player.getUniqueId());
+            player.closeInventory();
             plugin.getPreviewGui().openEnderChestPreview(
-                    player, session.targetUuid, session.snapshotId);
+                    player, session.targetUuid, session.snapshotId,
+                    () -> openRestoreGui(player, session.targetUuid, session.snapshotId));
         } else if (slot == SLOT_RESTORE_ALL) {
             handleRestoreAll(player, session, tracker, isAdmin);
         }
@@ -415,7 +424,8 @@ public class RestoreGui implements Listener {
                         tracker.markStatusRestored(key);
                         player.sendMessage(plugin.getMessage("status-restored")
                                 .replaceText(b -> b.matchLiteral("{status}")
-                                        .replacement("Location")));
+                                        .replacement(plugin.getLanguageManager()
+                                                .getRawMessage("gui.restore.status.location-name"))));
                         return;
                     }
                 }
@@ -427,8 +437,8 @@ public class RestoreGui implements Listener {
                 for (String effectStr : config.getStringList("status.effects")) {
                     String[] parts = effectStr.split(":");
                     if (parts.length == 3) {
-                        PotionEffectType type =
-                                org.bukkit.Registry.EFFECT.match(parts[0]);
+                        PotionEffectType type = org.bukkit.Registry.EFFECT.get(
+                                NamespacedKey.minecraft(parts[0]));
                         if (type != null) {
                             player.addPotionEffect(new PotionEffect(type,
                                     Integer.parseInt(parts[1]),
@@ -449,7 +459,8 @@ public class RestoreGui implements Listener {
         tracker.markStatusRestored(key);
         player.sendMessage(plugin.getMessage("status-restored")
                 .replaceText(b -> b.matchLiteral("{status}")
-                        .replacement(capitalize(key))));
+                        .replacement(plugin.getLanguageManager()
+                                .getRawMessage("gui.restore.status." + key + "-name"))));
     }
 
     private void handleRestoreAll(Player player, RestoreSession session,
@@ -481,14 +492,17 @@ public class RestoreGui implements Listener {
         if (!(event.getWhoClicked() instanceof Player player)) {
             return;
         }
-        if (activeSessions.containsKey(player.getUniqueId())) {
+        RestoreSession session = activeSessions.get(player.getUniqueId());
+        if (session != null && event.getView().getTopInventory() == session.inventory) {
             event.setCancelled(true);
         }
     }
 
     @EventHandler
     public void onInventoryClose(InventoryCloseEvent event) {
-        if (event.getPlayer() instanceof Player player) {
+        if (!(event.getPlayer() instanceof Player player)) return;
+        RestoreSession session = activeSessions.get(player.getUniqueId());
+        if (session != null && event.getInventory() == session.inventory) {
             activeSessions.remove(player.getUniqueId());
         }
     }
@@ -506,32 +520,30 @@ public class RestoreGui implements Listener {
 
     private ItemStack createClaimedMarker() {
         return createItem(Material.LIME_STAINED_GLASS_PANE,
-                Component.text("Restored", NamedTextColor.GREEN)
-                        .decoration(TextDecoration.ITALIC, false));
+                plugin.getLanguageManager().getGuiMessage("gui.restore.claimed"));
     }
 
-    private ItemStack createStatusButton(Material material, String name,
+    private ItemStack createStatusButton(Material material, Component name,
                                          String value, String key,
                                          RestoredTracker tracker, boolean isAdmin) {
         boolean restored = !isAdmin && tracker.isStatusRestored(key);
         NamedTextColor color = restored ? NamedTextColor.DARK_GRAY : NamedTextColor.AQUA;
 
         List<Component> lore = new ArrayList<>();
-        lore.add(Component.text("Value: " + value, NamedTextColor.GRAY)
-                .decoration(TextDecoration.ITALIC, false));
+        lore.add(plugin.getLanguageManager().getGuiMessage(
+                "gui.restore.status.value",
+                "{value}", value
+        ));
         if (restored) {
-            lore.add(Component.text("Already restored", NamedTextColor.RED)
-                    .decoration(TextDecoration.ITALIC, false));
+            lore.add(plugin.getLanguageManager().getGuiMessage("gui.restore.status.already-restored"));
         } else {
-            lore.add(Component.text("Click to restore", NamedTextColor.YELLOW)
-                    .decoration(TextDecoration.ITALIC, false));
+            lore.add(plugin.getLanguageManager().getGuiMessage("gui.restore.status.click-restore"));
         }
 
         Material display = restored ? Material.GRAY_DYE : material;
         ItemStack item = new ItemStack(display);
         ItemMeta meta = item.getItemMeta();
-        meta.displayName(Component.text(name, color)
-                .decoration(TextDecoration.ITALIC, false));
+        meta.displayName(name.color(color).decoration(TextDecoration.ITALIC, false));
         meta.lore(lore);
         item.setItemMeta(meta);
         return item;
@@ -549,13 +561,6 @@ public class RestoreGui implements Listener {
         return item;
     }
 
-    private String capitalize(String s) {
-        if (s == null || s.isEmpty()) {
-            return s;
-        }
-        return s.substring(0, 1).toUpperCase() + s.substring(1);
-    }
-
     private static class RestoreSession {
         final String targetUuid;
         final String snapshotId;
@@ -563,10 +568,12 @@ public class RestoreGui implements Listener {
         final Map<Integer, ItemStack> armorItems = new HashMap<>();
         ItemStack offhandItem;
         YamlConfiguration config;
+        final Inventory inventory;
 
-        RestoreSession(String targetUuid, String snapshotId) {
+        RestoreSession(String targetUuid, String snapshotId, Inventory inventory) {
             this.targetUuid = targetUuid;
             this.snapshotId = snapshotId;
+            this.inventory = inventory;
         }
     }
 }
