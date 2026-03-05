@@ -280,9 +280,12 @@ public class PreviewGui implements Listener {
         Player target = Bukkit.getPlayer(targetUuid);
         if (target != null && target.isOnline()) {
             plugin.getRequestManager().notifyPlayer(target);
-            Component revoke = plugin.getMessage("request-revoke-button")
+            Component revoke = plugin.getLanguageManager()
+                    .getGuiMessage("request-revoke-button")
                     .clickEvent(ClickEvent.runCommand("/invbackup revoke " + request.requestId))
-                    .hoverEvent(HoverEvent.showText(plugin.getMessage("request-revoke-hover")));
+                    .hoverEvent(HoverEvent.showText(
+                            plugin.getLanguageManager()
+                                    .getGuiMessage("request-revoke-hover")));
             viewer.sendMessage(plugin.getMessage("request-sent")
                     .replaceText(b -> b.matchLiteral("{player}")
                             .replacement(target.getName()))
@@ -416,9 +419,12 @@ public class PreviewGui implements Listener {
         Bukkit.getScheduler().runTask(plugin, () -> {
             if (onlineRef != null && onlineRef.isOnline()) {
                 plugin.getRequestManager().notifyPlayer(onlineRef);
-                Component revoke = plugin.getMessage("request-revoke-button")
+                Component revoke = plugin.getLanguageManager()
+                        .getGuiMessage("request-revoke-button")
                         .clickEvent(ClickEvent.runCommand("/invbackup revoke " + requestId))
-                        .hoverEvent(HoverEvent.showText(plugin.getMessage("request-revoke-hover")));
+                        .hoverEvent(HoverEvent.showText(
+                                plugin.getLanguageManager()
+                                        .getGuiMessage("request-revoke-hover")));
                 admin.sendMessage(plugin.getMessage("request-sent")
                         .replaceText(b -> b.matchLiteral("{player}")
                                 .replacement(onlineRef.getName()))

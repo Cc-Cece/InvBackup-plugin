@@ -1,35 +1,10 @@
-import java.text.SimpleDateFormat
-
 plugins {
     id 'com.gradleup.shadow' version '9.3.1'
     id 'java'
 }
 
 group = "com.invbackup"
-
-static def getTime() {
-    SimpleDateFormat sdf = new SimpleDateFormat("yyMMdd-HHmm")
-    sdf.setTimeZone(TimeZone.getTimeZone("UTC"))
-    return sdf.format(new Date()).toString()
-}
-
-String shortVersion = null
-if (hasProperty('ver')) {
-    if (ver.charAt(0) == "v") {
-        shortVersion = ver.substring(1).toUpperCase()
-    } else {
-        shortVersion = ver.toUpperCase()
-    }
-}
-
-int rcIdx
-if (shortVersion == null || shortVersion == "") {
-    version = getTime() + "-SNAPSHOT"
-} else if ((rcIdx = shortVersion.indexOf("-RC-")) != -1) {
-    version = shortVersion.substring(0, rcIdx) + "-SNAPSHOT"
-} else {
-    version = shortVersion
-}
+version = "1.0.0"
 
 java {
     sourceCompatibility = JavaVersion.VERSION_21

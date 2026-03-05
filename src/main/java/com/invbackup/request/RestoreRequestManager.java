@@ -4,6 +4,7 @@ import com.invbackup.InvBackup;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickEvent;
 import net.kyori.adventure.text.event.HoverEvent;
+import org.bukkit.Bukkit;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
@@ -12,6 +13,7 @@ import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 
@@ -80,33 +82,52 @@ public class RestoreRequestManager {
                     .replaceText(b -> b.matchLiteral("{admin}")
                             .replacement(req.requestedBy));
 
-            Component accept = plugin.getMessage("request-accept-button")
+            Component accept = plugin.getLanguageManager()
+                    .getGuiMessage("request-accept-button")
                     .clickEvent(ClickEvent.runCommand(
                             "/invbackup accept " + req.requestId))
                     .hoverEvent(HoverEvent.showText(
-                            plugin.getMessage("request-accept-hover")))
-                    .append(Component.space());
+                            plugin.getLanguageManager()
+                                    .getGuiMessage("request-accept-hover")));
 
-            Component decline = plugin.getMessage("request-decline-button")
+            Component decline = plugin.getLanguageManager()
+                    .getGuiMessage("request-decline-button")
                     .clickEvent(ClickEvent.runCommand(
                             "/invbackup decline " + req.requestId))
                     .hoverEvent(HoverEvent.showText(
-                            plugin.getMessage("request-decline-hover")));
+                            plugin.getLanguageManager()
+                                    .getGuiMessage("request-decline-hover")));
 
             Component full = msg;
+
+            // Cross-player source hint (A's snapshot -> B restores)
+            if (req.sourceUuid != null && req.targetUuid != null
+                    && !req.sourceUuid.equals(req.targetUuid)) {
+                String src = req.sourceName != null && !req.sourceName.isBlank()
+                        ? req.sourceName
+                        : req.sourceUuid;
+                full = full.append(Component.newline())
+                        .append(plugin.getMessage("request-source-tip")
+                                .replaceText(b -> b.matchLiteral("{source}")
+                                        .replacement(src)));
+            }
+
             if (windowSeconds > 0) {
                 full = full.append(Component.newline())
                         .append(plugin.getMessage("request-open-window-tip")
                                 .replaceText(b -> b.matchLiteral("{seconds}")
                                         .replacement(String.valueOf(windowSeconds))));
             }
-            if (dropOverflow) {
-                full = full.append(Component.newline())
-                        .append(plugin.getMessage("request-restore-all-drop-tip"));
-            }
+            full = full.append(Component.newline())
+                    .append(plugin.getMessage(dropOverflow
+                            ? "request-restore-all-drop-tip"
+                            : "request-restore-all-keep-tip"));
 
-            player.sendMessage(full.append(Component.newline())
+            // Buttons on the same line after the final tip
+            player.sendMessage(full
+                    .append(Component.space())
                     .append(accept)
+                    .append(Component.space())
                     .append(decline));
         }
     }
@@ -206,18 +227,25 @@ public class RestoreRequestManager {
 
     /**
      * Revoke a pending request. Only the requester (requestedByUuid) may revoke.
-     * @return true if the request was pending and has been revoked
+     *
+     * @return the revoked request, or null if not revoked
      */
-    public boolean revokeRequest(String requestId, String operatorUuid) {
+    public RestoreRequest revokeRequest(String requestId, String operatorUuid) {
         RestoreRequest req = findRequestById(requestId);
         if (req == null || !"pending".equals(req.status)) {
-            return false;
+            return null;
         }
         if (!req.requestedByUuid.equals(operatorUuid)) {
-            return false;
+            return null;
         }
         updateRequestStatus(req.targetUuid, requestId, "revoked");
-        return true;
+
+        Player target = Bukkit.getPlayer(UUID.fromString(req.targetUuid));
+        if (target != null && target.isOnline()) {
+            target.sendMessage(plugin.getMessage("request-revoked-by-admin"));
+        }
+
+        return req;
     }
 
     public void updateRequestStatus(String targetUuid, String requestId,

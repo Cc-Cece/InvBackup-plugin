@@ -28,6 +28,7 @@ public class LanguageManager {
         // Save built-in language files
         saveDefaultLang("zh_CN");
         saveDefaultLang("en_US");
+        saveDefaultLang("zh_TW");
 
         // Load the configured language file
         File langFile = new File(plugin.getDataFolder(),

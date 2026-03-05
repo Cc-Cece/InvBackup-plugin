@@ -139,10 +139,17 @@ public class RestoreGui implements Listener {
             }
 
             // Restore All button
+            String overflowMode = plugin.getConfig()
+                    .getString("restore-request.restore-all-overflow", "drop")
+                    .toLowerCase();
+            boolean dropOverflow = "drop".equals(overflowMode);
             gui.setItem(SLOT_RESTORE_ALL, createItem(Material.EMERALD_BLOCK,
                     plugin.getLanguageManager().getGuiMessage("gui.restore.restore-all.name"),
                     plugin.getLanguageManager().getGuiMessage("gui.restore.restore-all.lore1"),
-                    plugin.getLanguageManager().getGuiMessage("gui.restore.restore-all.lore2")));
+                    plugin.getLanguageManager().getGuiMessage("gui.restore.restore-all.lore2"),
+                    plugin.getLanguageManager().getGuiMessage(dropOverflow
+                            ? "gui.restore.restore-all.lore3-drop"
+                            : "gui.restore.restore-all.lore3-keep")));
 
             // Fill remaining empty slots in row 6 with glass
             for (int i = 50; i < 54; i++) {
@@ -150,6 +157,24 @@ public class RestoreGui implements Listener {
                     gui.setItem(i, createItem(Material.GRAY_STAINED_GLASS_PANE,
                             Component.text(" ")));
                 }
+            }
+
+            // Request-mode info (opened via accept)
+            if (session.requestId != null) {
+                int windowSeconds = plugin.getConfig()
+                        .getInt("restore-request.open-window-seconds", 0);
+                Component lore2 = windowSeconds > 0
+                        ? plugin.getLanguageManager().getGuiMessage(
+                        "gui.restore.request-info.reopen-window",
+                        "{seconds}", String.valueOf(windowSeconds))
+                        : plugin.getLanguageManager().getGuiMessage(
+                        "gui.restore.request-info.reopen-once");
+
+                gui.setItem(53, createItem(Material.BOOK,
+                        plugin.getLanguageManager().getGuiMessage("gui.restore.request-info.name"),
+                        plugin.getLanguageManager().getGuiMessage("gui.restore.request-info.lore1"),
+                        lore2,
+                        plugin.getLanguageManager().getGuiMessage("gui.restore.request-info.lore3")));
             }
 
         } catch (IOException e) {
@@ -869,9 +894,12 @@ public class RestoreGui implements Listener {
 
         if (target.isOnline()) {
             plugin.getRequestManager().notifyPlayer(target);
-            Component revoke = plugin.getMessage("request-revoke-button")
+            Component revoke = plugin.getLanguageManager()
+                    .getGuiMessage("request-revoke-button")
                     .clickEvent(ClickEvent.runCommand("/invbackup revoke " + request.requestId))
-                    .hoverEvent(HoverEvent.showText(plugin.getMessage("request-revoke-hover")));
+                    .hoverEvent(HoverEvent.showText(
+                            plugin.getLanguageManager()
+                                    .getGuiMessage("request-revoke-hover")));
             admin.sendMessage(plugin.getMessage("request-sent")
                     .replaceText(b -> b.matchLiteral("{player}")
                             .replacement(target.getName()))

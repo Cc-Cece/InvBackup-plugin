@@ -261,9 +261,12 @@ public class InvBackupCommand implements CommandExecutor {
                     .replaceText(b -> b.matchLiteral("{player}")
                             .replacement(targetName));
             if (sender instanceof Player) {
-                Component revoke = plugin.getMessage("request-revoke-button")
+                Component revoke = plugin.getLanguageManager()
+                        .getGuiMessage("request-revoke-button")
                         .clickEvent(ClickEvent.runCommand("/invbackup revoke " + request.requestId))
-                        .hoverEvent(HoverEvent.showText(plugin.getMessage("request-revoke-hover")));
+                        .hoverEvent(HoverEvent.showText(
+                                plugin.getLanguageManager()
+                                        .getGuiMessage("request-revoke-hover")));
                 sender.sendMessage(base.append(Component.space()).append(revoke));
             } else {
                 sender.sendMessage(base);
@@ -428,9 +431,9 @@ public class InvBackupCommand implements CommandExecutor {
             return;
         }
         String requestId = args[1];
-        boolean ok = plugin.getRequestManager()
+        RestoreRequest revoked = plugin.getRequestManager()
                 .revokeRequest(requestId, player.getUniqueId().toString());
-        if (ok) {
+        if (revoked != null) {
             player.sendMessage(plugin.getMessage("request-revoked"));
         } else {
             player.sendMessage(plugin.getMessage("request-revoke-failed"));
