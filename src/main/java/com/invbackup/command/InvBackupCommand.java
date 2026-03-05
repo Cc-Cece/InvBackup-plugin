@@ -47,6 +47,7 @@ public class InvBackupCommand implements CommandExecutor {
             case "forcerestore" -> handleForceRestore(sender, args);
             case "accept" -> handleAccept(sender, args);
             case "decline" -> handleDecline(sender, args);
+            case "revoke" -> handleRevoke(sender, args);
             case "delete" -> handleDelete(sender, args);
             case "saveall" -> handleSaveAll(sender, args);
             case "import" -> handleImport(sender, args);
@@ -249,16 +250,24 @@ public class InvBackupCommand implements CommandExecutor {
                 ? p.getUniqueId().toString() : "CONSOLE";
         String targetName = resolvePlayerName(targetUuid);
 
-        plugin.getRequestManager().createRequestForTarget(
+        RestoreRequest request = plugin.getRequestManager().createRequestForTarget(
                 targetUuid.toString(), targetName, snapshotId,
                 adminName, adminUuid);
 
         Player target = Bukkit.getPlayer(targetUuid);
         if (target != null && target.isOnline()) {
             plugin.getRequestManager().notifyPlayer(target);
-            sender.sendMessage(plugin.getMessage("request-sent")
+            Component base = plugin.getMessage("request-sent")
                     .replaceText(b -> b.matchLiteral("{player}")
-                            .replacement(targetName)));
+                            .replacement(targetName));
+            if (sender instanceof Player) {
+                Component revoke = plugin.getMessage("request-revoke-button")
+                        .clickEvent(ClickEvent.runCommand("/invbackup revoke " + request.requestId))
+                        .hoverEvent(HoverEvent.showText(plugin.getMessage("request-revoke-hover")));
+                sender.sendMessage(base.append(Component.space()).append(revoke));
+            } else {
+                sender.sendMessage(base);
+            }
         } else {
             sender.sendMessage(plugin.getMessage("request-sent-offline")
                     .replaceText(b -> b.matchLiteral("{player}")
@@ -351,7 +360,8 @@ public class InvBackupCommand implements CommandExecutor {
         }
 
         if ("declined".equalsIgnoreCase(request.status)
-                || "expired".equalsIgnoreCase(request.status)) {
+                || "expired".equalsIgnoreCase(request.status)
+                || "revoked".equalsIgnoreCase(request.status)) {
             player.sendMessage(plugin.getMessage("request-expired"));
             return;
         }
@@ -392,7 +402,7 @@ public class InvBackupCommand implements CommandExecutor {
                 ? request.sourceUuid : request.targetUuid;
 
         plugin.getRestoreGui().openRestoreGui(
-                player, sourceUuid, request.snapshotId);
+                player, sourceUuid, request.snapshotId, requestId);
     }
 
     private void handleDecline(CommandSender sender, String[] args) {
@@ -403,6 +413,28 @@ public class InvBackupCommand implements CommandExecutor {
         plugin.getRequestManager().updateRequestStatus(
                 player.getUniqueId().toString(), requestId, "declined");
         player.sendMessage(plugin.getMessage("request-declined"));
+    }
+
+    private void handleRevoke(CommandSender sender, String[] args) {
+        if (!(sender instanceof Player player)) return;
+        if (!player.hasPermission("invbackup.admin")) {
+            player.sendMessage(plugin.getMessage("no-permission"));
+            return;
+        }
+        if (args.length < 2) {
+            player.sendMessage(Component.text(
+                    "Usage: /invbackup revoke <requestId>",
+                    NamedTextColor.RED));
+            return;
+        }
+        String requestId = args[1];
+        boolean ok = plugin.getRequestManager()
+                .revokeRequest(requestId, player.getUniqueId().toString());
+        if (ok) {
+            player.sendMessage(plugin.getMessage("request-revoked"));
+        } else {
+            player.sendMessage(plugin.getMessage("request-revoke-failed"));
+        }
     }
 
     // ========== delete ==========

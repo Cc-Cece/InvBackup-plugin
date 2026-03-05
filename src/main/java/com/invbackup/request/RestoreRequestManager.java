@@ -3,8 +3,7 @@ package com.invbackup.request;
 import com.invbackup.InvBackup;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickEvent;
-import net.kyori.adventure.text.format.NamedTextColor;
-import net.kyori.adventure.text.format.TextDecoration;
+import net.kyori.adventure.text.event.HoverEvent;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
@@ -65,6 +64,13 @@ public class RestoreRequestManager {
         cleanExpired(uuid);
         List<RestoreRequest> pending = getPendingRequests(uuid);
 
+        int windowSeconds = plugin.getConfig()
+                .getInt("restore-request.open-window-seconds", 0);
+        String overflowMode = plugin.getConfig()
+                .getString("restore-request.restore-all-overflow", "drop")
+                .toLowerCase();
+        boolean dropOverflow = "drop".equals(overflowMode);
+
         for (RestoreRequest req : pending) {
             if (!"pending".equals(req.status)) {
                 continue;
@@ -74,18 +80,34 @@ public class RestoreRequestManager {
                     .replaceText(b -> b.matchLiteral("{admin}")
                             .replacement(req.requestedBy));
 
-            Component accept = Component.text("[Accept]", NamedTextColor.GREEN)
-                    .decorate(TextDecoration.BOLD)
+            Component accept = plugin.getMessage("request-accept-button")
                     .clickEvent(ClickEvent.runCommand(
                             "/invbackup accept " + req.requestId))
-                    .append(Component.text(" "));
+                    .hoverEvent(HoverEvent.showText(
+                            plugin.getMessage("request-accept-hover")))
+                    .append(Component.space());
 
-            Component decline = Component.text("[Decline]", NamedTextColor.RED)
-                    .decorate(TextDecoration.BOLD)
+            Component decline = plugin.getMessage("request-decline-button")
                     .clickEvent(ClickEvent.runCommand(
-                            "/invbackup decline " + req.requestId));
+                            "/invbackup decline " + req.requestId))
+                    .hoverEvent(HoverEvent.showText(
+                            plugin.getMessage("request-decline-hover")));
 
-            player.sendMessage(msg.append(accept).append(decline));
+            Component full = msg;
+            if (windowSeconds > 0) {
+                full = full.append(Component.newline())
+                        .append(plugin.getMessage("request-open-window-tip")
+                                .replaceText(b -> b.matchLiteral("{seconds}")
+                                        .replacement(String.valueOf(windowSeconds))));
+            }
+            if (dropOverflow) {
+                full = full.append(Component.newline())
+                        .append(plugin.getMessage("request-restore-all-drop-tip"));
+            }
+
+            player.sendMessage(full.append(Component.newline())
+                    .append(accept)
+                    .append(decline));
         }
     }
 
@@ -180,6 +202,22 @@ public class RestoreRequestManager {
             }
         }
         return null;
+    }
+
+    /**
+     * Revoke a pending request. Only the requester (requestedByUuid) may revoke.
+     * @return true if the request was pending and has been revoked
+     */
+    public boolean revokeRequest(String requestId, String operatorUuid) {
+        RestoreRequest req = findRequestById(requestId);
+        if (req == null || !"pending".equals(req.status)) {
+            return false;
+        }
+        if (!req.requestedByUuid.equals(operatorUuid)) {
+            return false;
+        }
+        updateRequestStatus(req.targetUuid, requestId, "revoked");
+        return true;
     }
 
     public void updateRequestStatus(String targetUuid, String requestId,

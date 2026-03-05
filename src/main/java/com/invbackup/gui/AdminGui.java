@@ -159,7 +159,7 @@ public class AdminGui implements Listener {
         // Bulk restore button lives at SLOT_INFO + 1 on the player list page.
         if (slot == SLOT_INFO + 1) {
             activeSessions.remove(player.getUniqueId());
-            plugin.getBulkRestoreGui().open(player);
+            plugin.getBulkRestoreGui().open(player, () -> openPlayerList(player, session.page));
             return;
         }
 

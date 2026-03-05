@@ -14,7 +14,7 @@ public class RestoreRequest {
     public String requestedBy;
     public String requestedByUuid;
     public long timestamp;
-    public String status; // pending, accepted, declined, expired
+    public String status; // pending, accepted, declined, expired, revoked
     // Timestamp until which RestoreGui can be reopened after accepting
     // (0 = only first open is allowed)
     public long openExpiredAt;

@@ -32,3 +32,7 @@ restore-request:
   #       will be migrated to the current UUID on join and still be delivered.
   # false: only UUID must match; name will be ignored.
   match-by-name: true
+  # Whether admins can open RestoreGui and type another player's name
+  # to queue a cross-player restore request (A's snapshot -> B).
+  manual-name-input:
+    enabled: false

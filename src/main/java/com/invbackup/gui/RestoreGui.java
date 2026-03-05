@@ -2,8 +2,11 @@ package com.invbackup.gui;
 
 import com.invbackup.InvBackup;
 import com.invbackup.manager.RestoredTracker;
+import com.invbackup.request.RestoreRequest;
 import com.invbackup.manager.SerializationUtil;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.event.ClickEvent;
+import net.kyori.adventure.text.event.HoverEvent;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextDecoration;
 import org.bukkit.Bukkit;
@@ -58,6 +61,11 @@ public class RestoreGui implements Listener {
     }
 
     public void openRestoreGui(Player player, String targetUuid, String snapshotId) {
+        openRestoreGui(player, targetUuid, snapshotId, null);
+    }
+
+    public void openRestoreGui(Player player, String targetUuid, String snapshotId,
+                               String requestId) {
         YamlConfiguration config = plugin.getBackupManager()
                 .loadBackupConfig(targetUuid, snapshotId);
         if (config == null) {
@@ -75,7 +83,7 @@ public class RestoreGui implements Listener {
         Component title = plugin.getLanguageManager().getGuiMessage("gui.restore.title");
         Inventory gui = Bukkit.createInventory(null, 54, title);
 
-        RestoreSession session = new RestoreSession(targetUuid, snapshotId, gui);
+        RestoreSession session = new RestoreSession(targetUuid, snapshotId, gui, requestId);
 
         try {
             // Row 1-4: Inventory content (slots 0-35)
@@ -220,16 +228,9 @@ public class RestoreGui implements Listener {
                 plugin.getLanguageManager().getGuiMessage("gui.restore.enderchest.name"),
                 plugin.getLanguageManager().getGuiMessage("gui.restore.enderchest.lore")));
 
-        // Slot 43: optional manual name input (anvil)
-        if (isAdmin && plugin.getConfig().getBoolean("restore-request.manual-name-input.enabled", false)) {
-            gui.setItem(SLOT_NAME_INPUT, createItem(Material.NAME_TAG,
-                    plugin.getLanguageManager().getGuiMessage("gui.restore.name-input.name"),
-                    plugin.getLanguageManager().getGuiMessage("gui.restore.name-input.lore1"),
-                    plugin.getLanguageManager().getGuiMessage("gui.restore.name-input.lore2")));
-        } else {
-            gui.setItem(SLOT_NAME_INPUT, createItem(Material.GRAY_STAINED_GLASS_PANE,
-                    Component.text(" ")));
-        }
+        // Slot 43: reserved (no cross-player forwarding from RestoreGui; use PreviewGui instead)
+        gui.setItem(SLOT_NAME_INPUT, createItem(Material.GRAY_STAINED_GLASS_PANE,
+                Component.text(" ")));
     }
 
     @EventHandler
@@ -253,6 +254,18 @@ public class RestoreGui implements Listener {
 
         if (event.getView().getTopInventory() != session.inventory) {
             return;
+        }
+
+        // If this session was opened via an accepted request, ensure it wasn't revoked
+        if (session.requestId != null) {
+            RestoreRequest req = plugin.getRequestManager()
+                    .findRequest(player.getUniqueId().toString(), session.requestId);
+            if (req == null || "revoked".equals(req.status)) {
+                player.sendMessage(plugin.getMessage("request-revoked-by-admin"));
+                player.closeInventory();
+                activeSessions.remove(player.getUniqueId());
+                return;
+            }
         }
 
         event.setCancelled(true);
@@ -303,7 +316,7 @@ public class RestoreGui implements Listener {
             player.closeInventory();
             plugin.getPreviewGui().openEnderChestPreview(
                     player, session.targetUuid, session.snapshotId,
-                    () -> openRestoreGui(player, session.targetUuid, session.snapshotId));
+                    () -> openRestoreGui(player, session.targetUuid, session.snapshotId, session.requestId));
         } else if (slot == SLOT_RESTORE_ALL) {
             handleRestoreAll(player, session, tracker, isAdmin);
         } else if (slot == SLOT_NAME_INPUT && isAdmin &&
@@ -436,8 +449,6 @@ public class RestoreGui implements Listener {
                     org.bukkit.World world = Bukkit.getWorld(
                             config.getString("status.location.world", ""));
                     if (world != null) {
-                        player.closeInventory();
-                        activeSessions.remove(player.getUniqueId());
                         player.teleport(new Location(world,
                                 config.getDouble("status.location.x"),
                                 config.getDouble("status.location.y"),
@@ -766,6 +777,8 @@ public class RestoreGui implements Listener {
 
         NameInputSession ns = new NameInputSession();
         ns.config = session.config;
+        ns.snapshotId = session.snapshotId;
+        ns.sourceUuid = session.targetUuid;
         nameInputSessions.put(admin.getUniqueId(), ns);
 
         admin.openInventory(anvil);
@@ -774,19 +787,37 @@ public class RestoreGui implements Listener {
     private void handleNameInputClick(InventoryClickEvent event,
                                       Player admin,
                                       NameInputSession ns) {
-        if (event.getRawSlot() != 2) {
-            // Only handle clicks on the output slot
+        int rawSlot = event.getRawSlot();
+        if (rawSlot != 0 && rawSlot != 2) {
+            // Only handle clicks on the input or output slot
             return;
         }
         event.setCancelled(true);
 
-        ItemStack result = event.getCurrentItem();
-        if (result == null || !result.hasItemMeta()) {
-            return;
+        // Prefer the renamed text from the input slot (slot 0) to avoid any XP cost.
+        ItemStack source = event.getInventory().getItem(0);
+        String name = null;
+        if (source != null && source.hasItemMeta()) {
+            ItemMeta meta0 = source.getItemMeta();
+            Component display0 = meta0.displayName();
+            if (display0 != null) {
+                name = net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer
+                        .plainText().serialize(display0);
+            }
         }
-        ItemMeta meta = result.getItemMeta();
-        Component display = meta.displayName();
-        String name = display != null ? net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText().serialize(display) : null;
+        // Fallback to result slot if needed
+        if (name == null || name.isBlank()) {
+            ItemStack result = event.getInventory().getItem(2);
+            if (result != null && result.hasItemMeta()) {
+                ItemMeta meta = result.getItemMeta();
+                Component display = meta.displayName();
+                if (display != null) {
+                    name = net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer
+                            .plainText().serialize(display);
+                }
+            }
+        }
+
         if (name == null || name.isBlank()) {
             admin.sendMessage(plugin.getMessage("player-not-found"));
             return;
@@ -807,7 +838,7 @@ public class RestoreGui implements Listener {
         String adminName = admin.getName();
         String adminUuid = admin.getUniqueId().toString();
 
-        // Determine snapshot id from meta if available
+        // Determine snapshot id from session/meta if available
         String snapshotId = ns.snapshotId;
         if (snapshotId == null || snapshotId.isEmpty()) {
             snapshotId = ns.config != null
@@ -820,17 +851,32 @@ public class RestoreGui implements Listener {
             return;
         }
 
-        plugin.getRequestManager().createRequestForTarget(
-                targetUuid, targetName, snapshotId, adminName, adminUuid);
+        // Source = 当前 RestoreGui 中正在查看快照的原主人（A），Target = 这里输入名字的玩家（B）
+        String sourceUuid = ns.sourceUuid != null && !ns.sourceUuid.isEmpty()
+                ? ns.sourceUuid
+                : targetUuid;
+        String sourceName = ns.config != null
+                ? ns.config.getString("meta.target", targetName)
+                : targetName;
+
+        RestoreRequest request = plugin.getRequestManager().createRequest(
+                sourceUuid, sourceName,
+                targetUuid, targetName,
+                snapshotId, adminName, adminUuid);
 
         nameInputSessions.remove(admin.getUniqueId());
         admin.closeInventory();
 
         if (target.isOnline()) {
             plugin.getRequestManager().notifyPlayer(target);
+            Component revoke = plugin.getMessage("request-revoke-button")
+                    .clickEvent(ClickEvent.runCommand("/invbackup revoke " + request.requestId))
+                    .hoverEvent(HoverEvent.showText(plugin.getMessage("request-revoke-hover")));
             admin.sendMessage(plugin.getMessage("request-sent")
                     .replaceText(b -> b.matchLiteral("{player}")
-                            .replacement(target.getName())));
+                            .replacement(target.getName()))
+                    .append(Component.space())
+                    .append(revoke));
         } else {
             admin.sendMessage(plugin.getMessage("request-sent-offline")
                     .replaceText(b -> b.matchLiteral("{player}")
@@ -891,21 +937,26 @@ public class RestoreGui implements Listener {
     private static class RestoreSession {
         final String targetUuid;
         final String snapshotId;
+        /** When non-null, this GUI was opened via an accepted request; we validate it wasn't revoked on each click. */
+        final String requestId;
         final Map<Integer, ItemStack> inventoryItems = new HashMap<>();
         final Map<Integer, ItemStack> armorItems = new HashMap<>();
         ItemStack offhandItem;
         YamlConfiguration config;
         final Inventory inventory;
 
-        RestoreSession(String targetUuid, String snapshotId, Inventory inventory) {
+        RestoreSession(String targetUuid, String snapshotId, Inventory inventory,
+                       String requestId) {
             this.targetUuid = targetUuid;
             this.snapshotId = snapshotId;
             this.inventory = inventory;
+            this.requestId = requestId;
         }
     }
 
     private static class NameInputSession {
         YamlConfiguration config;
         String snapshotId;
+        String sourceUuid;
     }
 }

@@ -2,13 +2,17 @@ package com.invbackup.gui;
 
 import com.invbackup.InvBackup;
 import com.invbackup.manager.SerializationUtil;
+import com.invbackup.request.RestoreRequest;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.event.ClickEvent;
+import net.kyori.adventure.text.event.HoverEvent;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
+import org.bukkit.event.player.AsyncPlayerChatEvent;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
@@ -32,9 +36,11 @@ public class PreviewGui implements Listener {
     private static final int SLOT_RESTORE_FULL = 53;
     private static final int SLOT_ENDERCHEST = 51;
     private static final int SLOT_STATUS = 50;
+    private static final int SLOT_CROSS_RESTORE = 44;
 
     private final InvBackup plugin;
     private final Map<UUID, PreviewSession> activeSessions = new HashMap<>();
+    private final Map<UUID, CrossNameInputSession> nameInputSessions = new HashMap<>();
 
     public PreviewGui(InvBackup plugin) {
         this.plugin = plugin;
@@ -136,6 +142,14 @@ public class PreviewGui implements Listener {
                             plugin.getLanguageManager().getGuiMessage("gui.preview.full-restore.name"),
                             plugin.getLanguageManager().getGuiMessage("gui.preview.full-restore.lore")));
                 }
+
+                // Slot 44: Cross-player restore request (A -> B) via name input
+                if (plugin.getConfig().getBoolean("restore-request.manual-name-input.enabled", false)) {
+                    gui.setItem(SLOT_CROSS_RESTORE, createItem(Material.NAME_TAG,
+                            plugin.getLanguageManager().getGuiMessage("gui.preview.cross-restore.name"),
+                            plugin.getLanguageManager().getGuiMessage("gui.preview.cross-restore.lore1"),
+                            plugin.getLanguageManager().getGuiMessage("gui.preview.cross-restore.lore2")));
+                }
             }
 
         } catch (IOException e) {
@@ -175,6 +189,14 @@ public class PreviewGui implements Listener {
             player.closeInventory();
             activeSessions.remove(player.getUniqueId());
             Bukkit.getScheduler().runTask(plugin, session.onBack);
+            return;
+        }
+
+        // Cross-player restore request from preview (admin only) — prompt for name in chat
+        if (slot == SLOT_CROSS_RESTORE
+                && player.hasPermission("invbackup.admin")
+                && plugin.getConfig().getBoolean("restore-request.manual-name-input.enabled", false)) {
+            startCrossRestoreChatSession(player, session);
             return;
         }
 
@@ -231,6 +253,7 @@ public class PreviewGui implements Listener {
 
     public void removeSession(UUID playerId) {
         activeSessions.remove(playerId);
+        nameInputSessions.remove(playerId);
     }
 
     private void handleRestore(Player viewer, PreviewSession session, String level) {
@@ -250,16 +273,21 @@ public class PreviewGui implements Listener {
         String adminUuid = viewer.getUniqueId().toString();
 
         // Queue a restore request instead of restoring immediately.
-        plugin.getRequestManager().createRequestForTarget(
+        RestoreRequest request = plugin.getRequestManager().createRequestForTarget(
                 targetUuid.toString(), targetName, session.snapshotId,
                 adminName, adminUuid);
 
         Player target = Bukkit.getPlayer(targetUuid);
         if (target != null && target.isOnline()) {
             plugin.getRequestManager().notifyPlayer(target);
+            Component revoke = plugin.getMessage("request-revoke-button")
+                    .clickEvent(ClickEvent.runCommand("/invbackup revoke " + request.requestId))
+                    .hoverEvent(HoverEvent.showText(plugin.getMessage("request-revoke-hover")));
             viewer.sendMessage(plugin.getMessage("request-sent")
                     .replaceText(b -> b.matchLiteral("{player}")
-                            .replacement(target.getName())));
+                            .replacement(target.getName()))
+                    .append(Component.space())
+                    .append(revoke));
         } else {
             viewer.sendMessage(plugin.getMessage("request-sent-offline")
                     .replaceText(b -> b.matchLiteral("{player}")
@@ -308,6 +336,100 @@ public class PreviewGui implements Listener {
         gui.setItem(26, createItem(Material.ARROW,
                 plugin.getLanguageManager().getGuiMessage("gui.common.back")));
         viewer.openInventory(gui);
+    }
+
+    private void startCrossRestoreChatSession(Player admin, PreviewSession session) {
+        admin.closeInventory();
+        activeSessions.remove(admin.getUniqueId());
+
+        CrossNameInputSession ns = new CrossNameInputSession();
+        ns.sourceUuid = session.targetUuid;
+        ns.snapshotId = session.snapshotId;
+        nameInputSessions.put(admin.getUniqueId(), ns);
+
+        admin.sendMessage(plugin.getLanguageManager().getGuiMessage("gui.preview.cross-restore.chat-prompt"));
+    }
+
+    @EventHandler
+    @SuppressWarnings("deprecation")
+    public void onCrossRestoreChat(AsyncPlayerChatEvent event) {
+        Player admin = event.getPlayer();
+        CrossNameInputSession ns = nameInputSessions.remove(admin.getUniqueId());
+        if (ns == null) {
+            return;
+        }
+        event.setCancelled(true);
+
+        String name = event.getMessage().trim();
+        if (name.isEmpty()) {
+            admin.sendMessage(plugin.getMessage("player-not-found"));
+            return;
+        }
+        if (name.equalsIgnoreCase("cancel")) {
+            admin.sendMessage(plugin.getLanguageManager().getGuiMessage("gui.preview.cross-restore.chat-cancelled"));
+            return;
+        }
+
+        // Resolve target: online first, then offline (allow queueing for offline players).
+        java.util.UUID targetUuidObj = null;
+        String targetName = null;
+        Player online = Bukkit.getPlayerExact(name);
+        if (online != null) {
+            targetUuidObj = online.getUniqueId();
+            targetName = online.getName();
+        } else {
+            org.bukkit.OfflinePlayer offline = Bukkit.getOfflinePlayer(name);
+            if (offline.getUniqueId() != null) {
+                targetUuidObj = offline.getUniqueId();
+                targetName = offline.getName() != null ? offline.getName() : name;
+            }
+        }
+        if (targetUuidObj == null || targetName == null) {
+            admin.sendMessage(plugin.getMessage("player-not-found"));
+            return;
+        }
+        String targetUuid = targetUuidObj.toString();
+
+        String snapshotId = ns.snapshotId;
+        if (snapshotId == null || snapshotId.isEmpty()) {
+            admin.sendMessage(plugin.getMessage("backup-not-found"));
+            return;
+        }
+
+        String sourceUuid = ns.sourceUuid;
+        String sourceName = plugin.getIdentityManager().resolveName(java.util.UUID.fromString(sourceUuid));
+        if (sourceName == null || sourceName.isEmpty()) {
+            sourceName = sourceUuid;
+        }
+
+        String adminName = admin.getName();
+        String adminUuid = admin.getUniqueId().toString();
+
+        RestoreRequest request = plugin.getRequestManager().createRequest(
+                sourceUuid, sourceName,
+                targetUuid, targetName,
+                snapshotId, adminName, adminUuid);
+
+        final String resolvedTargetName = targetName;
+        final Player onlineRef = online;
+        final String requestId = request.requestId;
+        Bukkit.getScheduler().runTask(plugin, () -> {
+            if (onlineRef != null && onlineRef.isOnline()) {
+                plugin.getRequestManager().notifyPlayer(onlineRef);
+                Component revoke = plugin.getMessage("request-revoke-button")
+                        .clickEvent(ClickEvent.runCommand("/invbackup revoke " + requestId))
+                        .hoverEvent(HoverEvent.showText(plugin.getMessage("request-revoke-hover")));
+                admin.sendMessage(plugin.getMessage("request-sent")
+                        .replaceText(b -> b.matchLiteral("{player}")
+                                .replacement(onlineRef.getName()))
+                        .append(Component.space())
+                        .append(revoke));
+            } else {
+                admin.sendMessage(plugin.getMessage("request-sent-offline")
+                        .replaceText(b -> b.matchLiteral("{player}")
+                                .replacement(resolvedTargetName)));
+            }
+        });
     }
 
     private ItemStack createItem(Material material, Component name, Component... lore) {
@@ -395,5 +517,10 @@ public class PreviewGui implements Listener {
             this.mainInventory = mainInventory;
             this.onBack = onBack;
         }
+    }
+
+    private static class CrossNameInputSession {
+        String sourceUuid;
+        String snapshotId;
     }
 }
