@@ -61,6 +61,7 @@ public class InvBackupCommand implements CommandExecutor {
             case "migrate" -> handleMigrate(sender, args);
             case "search" -> handleSearch(sender, args);
             case "gui" -> handleGui(sender);
+            case "web" -> handleWeb(sender);
             case "reload" -> handleReload(sender);
             default -> sendHelp(sender);
         }
@@ -860,6 +861,53 @@ public class InvBackupCommand implements CommandExecutor {
         plugin.getCategoryGui().openCategoryMenu(player);
     }
 
+    // ========== web ==========
+
+    private void handleWeb(CommandSender sender) {
+        if (!sender.hasPermission("invbackup.admin")) {
+            sender.sendMessage(plugin.getMessage("no-permission"));
+            return;
+        }
+
+        if (!plugin.getConfig().getBoolean("web.enabled", false)) {
+            sender.sendMessage(Component.text(
+                    "InvBackup web UI is disabled (web.enabled=false).",
+                    NamedTextColor.RED));
+            return;
+        }
+
+        String host = plugin.getConfig().getString("web.host", "127.0.0.1");
+        int port = plugin.getConfig().getInt("web.port", 5800);
+        String baseUrl = "http://" + host + ":" + port + "/";
+        sender.sendMessage(Component.text("InvBackup Web UI: ",
+                        NamedTextColor.GREEN)
+                .append(Component.text(baseUrl, NamedTextColor.AQUA)));
+
+        boolean authEnabled = plugin.getConfig().getBoolean("web.auth.enabled", true);
+        if (authEnabled) {
+            String token = plugin.getConfig().getString("web.auth.token", "");
+            sender.sendMessage(Component.text(
+                    "Auth header: X-InvBackup-Token: " + token,
+                    NamedTextColor.YELLOW));
+            if (!token.isBlank()) {
+                sender.sendMessage(Component.text(
+                        "Quick URL: " + baseUrl + "?token=" + token,
+                        NamedTextColor.GRAY));
+            }
+        } else {
+            sender.sendMessage(Component.text(
+                    "Auth disabled. Anyone with access to this address can read backups.",
+                    NamedTextColor.RED));
+        }
+
+        if (plugin.getEmbeddedWebServer() == null
+                || !plugin.getEmbeddedWebServer().isRunning()) {
+            sender.sendMessage(Component.text(
+                    "Web server is not running. Try /ib reload to restart it.",
+                    NamedTextColor.RED));
+        }
+    }
+
     // ========== reload ==========
 
     private void handleReload(CommandSender sender) {
@@ -872,6 +920,7 @@ public class InvBackupCommand implements CommandExecutor {
         plugin.getLanguageManager().reload();
         plugin.getIdentityManager().reload();
         plugin.restartAutoSaveTask();
+        plugin.restartEmbeddedWebServer();
         sender.sendMessage(plugin.getMessage("reload-success"));
     }
 
@@ -915,6 +964,8 @@ public class InvBackupCommand implements CommandExecutor {
                     "Migrate UUID"));
             sender.sendMessage(helpLine("/ib search <name>",
                     "Search by player name"));
+            sender.sendMessage(helpLine("/ib web",
+                    "Show embedded web UI URL"));
             sender.sendMessage(helpLine("/ib reload", "Reload config"));
         }
     }

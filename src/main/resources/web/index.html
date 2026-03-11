@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>InvBackup Read-Only Web</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="bg-shape bg-shape-a"></div>
+  <div class="bg-shape bg-shape-b"></div>
+
+  <header class="topbar">
+    <div class="title-wrap">
+      <h1 id="title-main">InvBackup Read-Only Web</h1>
+      <p id="title-sub">
+        Filter backups, preview snapshot contents, and generate commands. This page cannot execute restores.
+      </p>
+    </div>
+
+    <div class="toolbar">
+      <label class="token-label">
+        <span id="label-language">Language</span>
+        <select id="language-switch">
+          <option value="zh-CN">简体中文</option>
+          <option value="en-US">English</option>
+        </select>
+      </label>
+
+      <label class="token-label">
+        <span id="label-token">Token</span>
+        <input id="auth-token" type="text" placeholder="X-InvBackup-Token">
+      </label>
+
+      <button id="save-token" class="btn btn-primary hoverable" type="button">Save Token</button>
+      <button id="refresh-all" class="btn hoverable" type="button">Refresh</button>
+      <span id="status-pill" class="status-pill">Idle</span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="panel panel-players">
+      <div class="panel-head">
+        <h2 id="players-title">Players</h2>
+        <span id="players-count" class="badge">0</span>
+      </div>
+
+      <div class="filters">
+        <label>
+          <span id="label-player-query">Search</span>
+          <input id="player-query" type="text" placeholder="Name or UUID">
+        </label>
+        <label>
+          <span id="label-player-sort">Sort</span>
+          <select id="player-sort">
+            <option value="latest">Last backup (newest)</option>
+            <option value="name">Name A-Z</option>
+          </select>
+        </label>
+      </div>
+
+      <div id="players-list" class="panel-scroll list"></div>
+    </section>
+
+    <section class="panel panel-snapshots">
+      <div class="panel-head">
+        <h2 id="snapshots-title">Snapshots</h2>
+        <span id="snapshots-count" class="badge">0</span>
+      </div>
+      <div id="snapshots-list" class="panel-scroll list"></div>
+    </section>
+
+    <section class="panel panel-detail">
+      <div id="detail-scroll" class="panel-scroll detail-scroll">
+        <h2 id="detail-title">Snapshot Detail</h2>
+
+        <div id="commands-box" class="command-box hidden">
+          <div class="command-controls">
+            <label>
+              <span id="label-target-player">Target Player</span>
+              <input id="target-player" type="text" placeholder="Optional override">
+            </label>
+            <label class="inline-checkbox">
+              <input id="use-uuid" type="checkbox">
+              <span id="label-use-uuid">Use UUID in commands</span>
+            </label>
+          </div>
+
+          <div class="command-row">
+            <label id="label-preview-command">Preview command</label>
+            <div class="command-line-wrap">
+              <code id="cmd-preview"></code>
+              <button id="copy-preview" class="btn btn-small hoverable" type="button">Copy</button>
+            </div>
+          </div>
+
+          <div class="command-row">
+            <label id="label-restore-command">Restore request command</label>
+            <div class="command-line-wrap">
+              <code id="cmd-restore"></code>
+              <button id="copy-restore" class="btn btn-small hoverable" type="button">Copy</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="meta-box" class="meta-box"></div>
+
+        <div class="inventory-wrap">
+          <div id="inv-content" class="inv-card"></div>
+          <div id="inv-armor" class="inv-card"></div>
+          <div id="inv-offhand" class="inv-card"></div>
+          <div id="inv-ender" class="inv-card"></div>
+        </div>
+
+        <div id="status-box" class="status-box"></div>
+        <div id="item-inspector" class="item-inspector">Click an item slot to inspect metadata.</div>
+      </div>
+    </section>
+  </main>
+
+  <script src="./main.js"></script>
+</body>
+</html>

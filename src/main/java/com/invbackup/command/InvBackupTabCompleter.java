@@ -40,7 +40,7 @@ public class InvBackupTabCompleter implements TabCompleter {
                 completions.addAll(Arrays.asList(
                         "gui", "saveall", "restore", "forcerestore",
                         "delete", "import", "export", "exportjson", "migrate",
-                        "search", "reload"));
+                        "search", "web", "reload"));
                 if (!completions.contains("list")) completions.add("list");
                 if (!completions.contains("preview")) completions.add("preview");
             }

@@ -105,3 +105,32 @@ restore-request:
   # to queue a cross-player restore request (A's snapshot -> B).
   manual-name-input:
     enabled: false
+
+# Embedded read-only web UI
+web:
+  # Default is false for safety. Enable to start the embedded HTTP server.
+  enabled: false
+  # Bind to localhost unless you explicitly need remote access.
+  host: "127.0.0.1"
+  port: 5800
+
+  auth:
+    enabled: true
+    # Set a strong random token in production.
+    # The token can be passed via header "X-InvBackup-Token"
+    # (or "Authorization: Bearer <token>").
+    token: "change-me"
+    # Convenience for browser quick-open links: http://host:port/?token=...
+    allow-query-token: true
+
+  api:
+    default-limit: 200
+    max-limit: 1000
+
+  icons:
+    # Base path used by the embedded web API icon proxy.
+    # You can use {mc} / {mc_version} / {minecraft} as placeholders.
+    remote-base: "https://assets.mcasset.cloud/{mc}/assets/minecraft/textures"
+    # Temporary in-memory icon cache on plugin side.
+    cache-ttl-seconds: 600
+    cache-max-entries: 1024
