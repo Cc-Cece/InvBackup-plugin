@@ -21,6 +21,7 @@ import org.bukkit.inventory.meta.SkullMeta;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
@@ -32,7 +33,10 @@ public class AdminGui implements Listener {
 
     private static final int PAGE_SIZE = 45;
     private static final int SLOT_PREV = 45;
+    private static final int SLOT_SORT = 47;
+    private static final int SLOT_BACK_TO_CATEGORY = 48;
     private static final int SLOT_INFO = 49;
+    private static final int SLOT_BULK_RESTORE = 50;
     private static final int SLOT_NEXT = 53;
 
     private final InvBackup plugin;
@@ -45,8 +49,11 @@ public class AdminGui implements Listener {
     // ========== Level 1: Player List ==========
 
     public void openPlayerList(Player viewer, int page) {
-        Set<String> allUuids = plugin.getBackupManager().getAllPlayerUuids();
-        List<String> uuidList = new ArrayList<>(allUuids);
+        openPlayerList(viewer, page, PlayerSortMode.NAME_ASC);
+    }
+
+    public void openPlayerList(Player viewer, int page, PlayerSortMode sortMode) {
+        List<String> uuidList = buildSortedPlayerList(sortMode);
 
         int totalPages = Math.max(1,
                 (int) Math.ceil((double) uuidList.size() / PAGE_SIZE));
@@ -67,11 +74,12 @@ public class AdminGui implements Listener {
             gui.setItem(i - start, createPlayerHead(uuid));
         }
 
-        fillNavRow(gui, page, totalPages);
+        fillNavRow(gui, page, totalPages, 1, sortMode);
 
         AdminSession session = new AdminSession();
         session.level = 1;
         session.page = page;
+        session.sortMode = sortMode;
         session.uuidList = uuidList;
         session.inventory = gui;
         activeSessions.put(viewer.getUniqueId(), session);
@@ -80,7 +88,12 @@ public class AdminGui implements Listener {
 
     // ========== Level 2: Backup List ==========
 
-    private void openBackupList(Player viewer, String targetUuid, int page) {
+    public void openBackupList(Player viewer, String targetUuid, int page) {
+        openBackupList(viewer, targetUuid, page, 0, PlayerSortMode.NAME_ASC);
+    }
+
+    public void openBackupList(Player viewer, String targetUuid, int page,
+                               int returnPlayerPage, PlayerSortMode returnSortMode) {
         List<BackupManager.BackupInfo> backups = plugin.getBackupManager()
                 .listBackups(targetUuid, null);
 
@@ -106,7 +119,7 @@ public class AdminGui implements Listener {
             gui.setItem(i - start, createBackupItem(info, sdf));
         }
 
-        fillNavRow(gui, page, totalPages);
+        fillNavRow(gui, page, totalPages, 2, returnSortMode);
 
         gui.setItem(SLOT_PREV, createItem(Material.ARROW,
                 plugin.getLanguageManager().getGuiMessage(
@@ -116,6 +129,8 @@ public class AdminGui implements Listener {
         session.level = 2;
         session.page = page;
         session.selectedUuid = targetUuid;
+        session.parentPlayerPage = Math.max(0, returnPlayerPage);
+        session.sortMode = returnSortMode;
         session.backups = backups;
         session.inventory = gui;
         activeSessions.put(viewer.getUniqueId(), session);
@@ -148,36 +163,47 @@ public class AdminGui implements Listener {
     private void handlePlayerListClick(Player player, AdminSession session,
                                        int slot) {
         if (slot == SLOT_NEXT) {
-            openPlayerList(player, session.page + 1);
+            openPlayerList(player, session.page + 1, session.sortMode);
             return;
         }
         if (slot == SLOT_PREV) {
-            openPlayerList(player, session.page - 1);
+            openPlayerList(player, session.page - 1, session.sortMode);
             return;
         }
 
-        // Bulk restore button lives at SLOT_INFO + 1 on the player list page.
-        if (slot == SLOT_INFO + 1) {
+        if (slot == SLOT_SORT) {
+            openPlayerList(player, 0, session.sortMode.next());
+            return;
+        }
+
+        if (slot == SLOT_BACK_TO_CATEGORY) {
             activeSessions.remove(player.getUniqueId());
-            plugin.getBulkRestoreGui().open(player, () -> openPlayerList(player, session.page));
+            plugin.getCategoryGui().openCategoryMenu(player);
+            return;
+        }
+
+        if (slot == SLOT_BULK_RESTORE) {
+            activeSessions.remove(player.getUniqueId());
+            plugin.getBulkRestoreGui().open(player, () -> openPlayerList(player, session.page, session.sortMode));
             return;
         }
 
         int index = session.page * PAGE_SIZE + slot;
         if (slot < PAGE_SIZE && index < session.uuidList.size()) {
             String uuid = session.uuidList.get(index);
-            openBackupList(player, uuid, 0);
+            openBackupList(player, uuid, 0, session.page, session.sortMode);
         }
     }
 
     private void handleBackupListClick(Player player, AdminSession session,
                                        int slot) {
         if (slot == SLOT_PREV) {
-            openPlayerList(player, 0);
+            openPlayerList(player, session.parentPlayerPage, session.sortMode);
             return;
         }
         if (slot == SLOT_NEXT) {
-            openBackupList(player, session.selectedUuid, session.page + 1);
+            openBackupList(player, session.selectedUuid, session.page + 1,
+                    session.parentPlayerPage, session.sortMode);
             return;
         }
 
@@ -188,7 +214,8 @@ public class AdminGui implements Listener {
             activeSessions.remove(player.getUniqueId());
             plugin.getPreviewGui().openPreview(
                     player, session.selectedUuid, info.snapshotId,
-                    () -> openBackupList(player, session.selectedUuid, session.page));
+                    () -> openBackupList(player, session.selectedUuid, session.page,
+                            session.parentPlayerPage, session.sortMode));
         }
     }
 
@@ -216,7 +243,8 @@ public class AdminGui implements Listener {
 
     // ========== Helper Methods ==========
 
-    private void fillNavRow(Inventory gui, int page, int totalPages) {
+    private void fillNavRow(Inventory gui, int page, int totalPages,
+                            int level, PlayerSortMode sortMode) {
         for (int i = 45; i < 54; i++) {
             gui.setItem(i, createItem(Material.BLACK_STAINED_GLASS_PANE,
                     Component.text(" ")));
@@ -229,10 +257,16 @@ public class AdminGui implements Listener {
         );
         gui.setItem(SLOT_INFO, createItem(Material.PAPER, info));
 
-        // Add a bulk restore button on the player list page (level 1)
-        // using the same nav row, next to page info.
-        gui.setItem(SLOT_INFO + 1, createItem(Material.EMERALD,
-                plugin.getLanguageManager().getGuiMessage("gui.admin.bulk-restore")));
+        if (level == 1) {
+            gui.setItem(SLOT_SORT, createItem(Material.HOPPER,
+                    plugin.getLanguageManager().getGuiMessage(
+                            "gui.admin.sort-toggle",
+                            "{mode}", plugin.getLanguageManager().getRawMessage(sortMode.langKey))));
+            gui.setItem(SLOT_BACK_TO_CATEGORY, createItem(Material.ARROW,
+                    plugin.getLanguageManager().getGuiMessage("gui.admin.back-to-category")));
+            gui.setItem(SLOT_BULK_RESTORE, createItem(Material.EMERALD,
+                    plugin.getLanguageManager().getGuiMessage("gui.admin.bulk-restore")));
+        }
 
         if (page > 0) {
             gui.setItem(SLOT_PREV, createItem(Material.ARROW,
@@ -245,7 +279,33 @@ public class AdminGui implements Listener {
         }
     }
 
-    private ItemStack createPlayerHead(String uuid) {
+    private List<String> buildSortedPlayerList(PlayerSortMode sortMode) {
+        Set<String> allUuids = plugin.getBackupManager().getAllPlayerUuids();
+        List<String> uuidList = new ArrayList<>(allUuids);
+
+        switch (sortMode) {
+            case NAME_ASC -> uuidList.sort(Comparator.comparing(this::resolvePlayerName,
+                    String.CASE_INSENSITIVE_ORDER));
+            case LAST_PLAYED_DESC -> uuidList.sort((a, b) -> {
+                int cmp = Long.compare(getLastPlayedSafe(b), getLastPlayedSafe(a));
+                if (cmp != 0) return cmp;
+                return resolvePlayerName(a).compareToIgnoreCase(resolvePlayerName(b));
+            });
+        }
+
+        return uuidList;
+    }
+
+    private long getLastPlayedSafe(String uuid) {
+        try {
+            OfflinePlayer op = Bukkit.getOfflinePlayer(UUID.fromString(uuid));
+            return op.getLastPlayed();
+        } catch (Exception ignored) {
+            return 0L;
+        }
+    }
+
+    public ItemStack createPlayerHead(String uuid) {
         ItemStack head = new ItemStack(Material.PLAYER_HEAD);
         SkullMeta meta = (SkullMeta) head.getItemMeta();
 
@@ -326,9 +386,26 @@ public class AdminGui implements Listener {
     private static class AdminSession {
         int level;
         int page;
+        int parentPlayerPage;
+        PlayerSortMode sortMode = PlayerSortMode.NAME_ASC;
         List<String> uuidList;
         String selectedUuid;
         List<BackupManager.BackupInfo> backups;
         Inventory inventory;
+    }
+
+    public enum PlayerSortMode {
+        NAME_ASC("gui.admin.sort.name"),
+        LAST_PLAYED_DESC("gui.admin.sort.last-played");
+
+        private final String langKey;
+
+        PlayerSortMode(String langKey) {
+            this.langKey = langKey;
+        }
+
+        public PlayerSortMode next() {
+            return this == NAME_ASC ? LAST_PLAYED_DESC : NAME_ASC;
+        }
     }
 }

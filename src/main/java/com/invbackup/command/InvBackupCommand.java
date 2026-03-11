@@ -16,9 +16,14 @@ import org.bukkit.entity.Player;
 
 import java.io.File;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.Date;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
 
 public class InvBackupCommand implements CommandExecutor {
@@ -742,17 +747,26 @@ public class InvBackupCommand implements CommandExecutor {
         }
 
         if (args.length < 2) {
-            sender.sendMessage(Component.text(
-                    "Usage: /ib search <playerName>", NamedTextColor.RED));
+            if (sender instanceof Player player) {
+                plugin.getSearchGui().openSearchMenu(player);
+            } else {
+                sender.sendMessage(Component.text(
+                        "Usage: /ib search <playerName|uuid>",
+                        NamedTextColor.RED));
+            }
             return;
         }
 
-        String playerName = args[1];
-        List<BackupManager.SearchResult> results = plugin.getBackupManager()
-                .searchByName(playerName);
+        String query = String.join(" ", Arrays.copyOfRange(args, 1, args.length)).trim();
+        List<String> results = searchPlayerUuids(query);
 
         if (results.isEmpty()) {
             sender.sendMessage(plugin.getMessage("search-no-results"));
+            return;
+        }
+
+        if (sender instanceof Player player) {
+            plugin.getSearchGui().openSearchResults(player, query, results, 0);
             return;
         }
 
@@ -760,17 +774,53 @@ public class InvBackupCommand implements CommandExecutor {
                 .replaceText(b -> b.matchLiteral("{count}")
                         .replacement(String.valueOf(results.size()))));
 
-        for (BackupManager.SearchResult result : results) {
+        for (String uuid : results) {
+            String name = resolveSearchName(uuid);
             sender.sendMessage(Component.text("  ", NamedTextColor.GRAY)
-                    .append(Component.text(result.playerName,
-                            NamedTextColor.GOLD))
+                    .append(Component.text(name, NamedTextColor.GOLD))
                     .append(Component.text(" -> ", NamedTextColor.GRAY))
-                    .append(Component.text(result.uuid,
-                            NamedTextColor.YELLOW))
-                    .append(Component.text(
-                            " (" + result.folder + ")",
-                            NamedTextColor.DARK_GRAY)));
+                    .append(Component.text(uuid, NamedTextColor.YELLOW)));
         }
+    }
+
+    private List<String> searchPlayerUuids(String query) {
+        String queryLower = query.toLowerCase(Locale.ROOT);
+        String queryUuidLike = query.replace("-", "").toLowerCase(Locale.ROOT);
+
+        Set<String> allUuids = collectKnownPlayerUuids();
+        List<String> results = new ArrayList<>();
+
+        for (String uuid : allUuids) {
+            String nameLower = resolveSearchName(uuid).toLowerCase(Locale.ROOT);
+            boolean matchName = nameLower.contains(queryLower);
+            boolean matchUuid = uuid.replace("-", "")
+                    .toLowerCase(Locale.ROOT)
+                    .contains(queryUuidLike);
+            if (matchName || matchUuid) {
+                results.add(uuid);
+            }
+        }
+
+        results.sort(Comparator.comparing(this::resolveSearchName, String.CASE_INSENSITIVE_ORDER));
+        return results;
+    }
+
+    private Set<String> collectKnownPlayerUuids() {
+        Set<String> allUuids = new LinkedHashSet<>(plugin.getBackupManager().getAllPlayerUuids());
+        for (Player online : Bukkit.getOnlinePlayers()) {
+            allUuids.add(online.getUniqueId().toString());
+        }
+        for (OfflinePlayer offline : Bukkit.getOfflinePlayers()) {
+            if (offline.getUniqueId() != null) {
+                allUuids.add(offline.getUniqueId().toString());
+            }
+        }
+        return allUuids;
+    }
+
+    private String resolveSearchName(String uuid) {
+        String name = plugin.getIdentityManager().resolveName(uuid);
+        return (name == null || name.isBlank()) ? uuid : name;
     }
 
     // ========== gui ==========
@@ -787,7 +837,8 @@ public class InvBackupCommand implements CommandExecutor {
             return;
         }
 
-        plugin.getAdminGui().openPlayerList(player, 0);
+        // 鎵撳紑鏂扮殑鍒嗙被鑿滃崟
+        plugin.getCategoryGui().openCategoryMenu(player);
     }
 
     // ========== reload ==========
@@ -879,3 +930,4 @@ public class InvBackupCommand implements CommandExecutor {
         return op.getName() != null ? op.getName() : uuid.toString();
     }
 }
+

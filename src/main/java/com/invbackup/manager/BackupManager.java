@@ -2,7 +2,6 @@ package com.invbackup.manager;
 
 import com.invbackup.InvBackup;
 import org.bukkit.Bukkit;
-import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.NamespacedKey;
 import org.bukkit.attribute.Attribute;
@@ -321,7 +320,6 @@ public class BackupManager {
 
         config.set("status.food", target.getFoodLevel());
         config.set("status.saturation", target.getSaturation());
-        config.set("status.gamemode", target.getGameMode().name());
         config.set("status.fly", target.isFlying());
 
         List<String> effects = new ArrayList<>();
@@ -400,14 +398,6 @@ public class BackupManager {
         target.setHealth(config.getDouble("status.health"));
         target.setFoodLevel(config.getInt("status.food"));
         target.setSaturation((float) config.getDouble("status.saturation"));
-
-        if (config.contains("status.gamemode")) {
-            try {
-                target.setGameMode(GameMode.valueOf(
-                        config.getString("status.gamemode")));
-            } catch (IllegalArgumentException ignored) {
-            }
-        }
 
         if (config.contains("status.fly")) {
             boolean fly = config.getBoolean("status.fly");

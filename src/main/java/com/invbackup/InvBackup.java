@@ -4,9 +4,11 @@ import com.invbackup.command.InvBackupCommand;
 import com.invbackup.command.InvBackupTabCompleter;
 import com.invbackup.gui.AdminGui;
 import com.invbackup.gui.BulkRestoreGui;
+import com.invbackup.gui.CategoryGui;
 import com.invbackup.gui.ImportConfirmGui;
 import com.invbackup.gui.PreviewGui;
 import com.invbackup.gui.RestoreGui;
+import com.invbackup.gui.SearchGui;
 import com.invbackup.manager.BackupManager;
 import com.invbackup.manager.LanguageManager;
 import com.invbackup.manager.PlayerIdentityManager;
@@ -32,6 +34,8 @@ public class InvBackup extends JavaPlugin implements Listener {
     private AdminGui adminGui;
     private ImportConfirmGui importConfirmGui;
     private BulkRestoreGui bulkRestoreGui;
+    private CategoryGui categoryGui;
+    private SearchGui searchGui;
     private int autoSaveTaskId = -1;
 
     @Override
@@ -49,6 +53,8 @@ public class InvBackup extends JavaPlugin implements Listener {
         adminGui = new AdminGui(this);
         importConfirmGui = new ImportConfirmGui(this);
         bulkRestoreGui = new BulkRestoreGui(this);
+        categoryGui = new CategoryGui(this);
+        searchGui = new SearchGui(this);
 
         var cmd = getCommand("invbackup");
         if (cmd != null) {
@@ -62,6 +68,8 @@ public class InvBackup extends JavaPlugin implements Listener {
         getServer().getPluginManager().registerEvents(adminGui, this);
         getServer().getPluginManager().registerEvents(importConfirmGui, this);
         getServer().getPluginManager().registerEvents(bulkRestoreGui, this);
+        getServer().getPluginManager().registerEvents(categoryGui, this);
+        getServer().getPluginManager().registerEvents(searchGui, this);
 
         startAutoSaveTask();
 
@@ -96,6 +104,8 @@ public class InvBackup extends JavaPlugin implements Listener {
         adminGui.removeSession(p.getUniqueId());
         importConfirmGui.removeSession(p.getUniqueId());
         bulkRestoreGui.removeSession(p.getUniqueId());
+        categoryGui.removeSession(p.getUniqueId());
+        searchGui.removeSession(p.getUniqueId());
     }
 
     @EventHandler
@@ -167,6 +177,14 @@ public class InvBackup extends JavaPlugin implements Listener {
 
     public BulkRestoreGui getBulkRestoreGui() {
         return bulkRestoreGui;
+    }
+
+    public CategoryGui getCategoryGui() {
+        return categoryGui;
+    }
+
+    public SearchGui getSearchGui() {
+        return searchGui;
     }
 
     public Component getMessage(String key) {

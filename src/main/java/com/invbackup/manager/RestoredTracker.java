@@ -134,7 +134,6 @@ public class RestoredTracker {
         config.set(basePath + ".status.food", true);
         config.set(basePath + ".status.location", true);
         config.set(basePath + ".status.effects", true);
-        config.set(basePath + ".status.gamemode", true);
 
         save();
     }

@@ -12,6 +12,7 @@ import org.bukkit.entity.Player;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -39,6 +40,15 @@ public class RestoreRequestManager {
                 targetUuid, targetName, snapshotId, requestedBy, requestedByUuid);
     }
 
+    public RestoreRequest createRequestForTarget(String targetUuid, String targetName,
+                                                 String snapshotId, String requestedBy,
+                                                 String requestedByUuid,
+                                                 List<String> allowedParts) {
+        return createRequest(targetUuid, targetName,
+                targetUuid, targetName, snapshotId, requestedBy, requestedByUuid,
+                allowedParts);
+    }
+
     /**
      * Create a restore request where the backup owned by (sourceUuid/sourceName)
      * will be restored by targetUuid/targetName (can differ for cross-player restore).
@@ -47,9 +57,19 @@ public class RestoreRequestManager {
                                         String targetUuid, String targetName,
                                         String snapshotId, String requestedBy,
                                         String requestedByUuid) {
+        return createRequest(sourceUuid, sourceName, targetUuid, targetName,
+                snapshotId, requestedBy, requestedByUuid, Collections.emptyList());
+    }
+
+    public RestoreRequest createRequest(String sourceUuid, String sourceName,
+                                        String targetUuid, String targetName,
+                                        String snapshotId, String requestedBy,
+                                        String requestedByUuid,
+                                        List<String> allowedParts) {
         RestoreRequest request = new RestoreRequest(
                 sourceUuid, sourceName, targetUuid, targetName,
                 snapshotId, requestedBy, requestedByUuid);
+        request.allowedParts = normalizeAllowedParts(allowedParts);
 
         saveRequest(targetUuid, request);
         return request;
@@ -177,6 +197,8 @@ public class RestoreRequestManager {
                     req.timestamp = sec.getLong("timestamp", 0);
                     req.status = status;
                     req.openExpiredAt = sec.getLong("open-expired-at", 0L);
+                    req.allowedParts = normalizeAllowedParts(
+                            sec.getStringList("allowed-parts"));
 
                     saveRequest(currentUuid, req);
 
@@ -318,6 +340,8 @@ public class RestoreRequestManager {
             req.timestamp = sec.getLong("timestamp", 0);
             req.status = sec.getString("status", "pending");
             req.openExpiredAt = sec.getLong("open-expired-at", 0L);
+            req.allowedParts = normalizeAllowedParts(
+                    sec.getStringList("allowed-parts"));
 
             requests.add(req);
         }
@@ -346,12 +370,35 @@ public class RestoreRequestManager {
         config.set(path + ".timestamp", request.timestamp);
         config.set(path + ".status", request.status);
         config.set(path + ".open-expired-at", request.openExpiredAt);
+        config.set(path + ".allowed-parts",
+                normalizeAllowedParts(request.allowedParts));
 
         try {
             config.save(file);
         } catch (IOException e) {
             plugin.getLogger().log(Level.SEVERE, "Failed to save restore request", e);
         }
+    }
+
+    private List<String> normalizeAllowedParts(List<String> raw) {
+        if (raw == null || raw.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        List<String> normalized = new ArrayList<>();
+        for (String p : raw) {
+            if (p == null) {
+                continue;
+            }
+            String key = p.trim().toLowerCase();
+            if (key.isEmpty()) {
+                continue;
+            }
+            if (!normalized.contains(key)) {
+                normalized.add(key);
+            }
+        }
+        return normalized;
     }
 
     public void cleanExpired(String targetUuid) {

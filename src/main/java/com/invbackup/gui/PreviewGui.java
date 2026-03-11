@@ -37,6 +37,21 @@ public class PreviewGui implements Listener {
     private static final int SLOT_ENDERCHEST = 51;
     private static final int SLOT_STATUS = 50;
     private static final int SLOT_CROSS_RESTORE = 44;
+    private static final int SLOT_TOGGLE_INVENTORY = 37;
+    private static final int SLOT_TOGGLE_ARMOR = 38;
+    private static final int SLOT_TOGGLE_EXP = 39;
+    private static final int SLOT_TOGGLE_LOCATION = 40;
+    private static final int SLOT_TOGGLE_ENDERCHEST = 41;
+    private static final int SLOT_TOGGLE_HEALTH_FOOD = 42;
+    private static final int SLOT_TOGGLE_EFFECTS = 43;
+
+    private static final String PART_INVENTORY = "inventory";
+    private static final String PART_ARMOR = "armor";
+    private static final String PART_EXP = "exp";
+    private static final String PART_LOCATION = "location";
+    private static final String PART_ENDERCHEST = "enderchest";
+    private static final String PART_HEALTH_FOOD = "health_food";
+    private static final String PART_EFFECTS = "effects";
 
     private final InvBackup plugin;
     private final Map<UUID, PreviewSession> activeSessions = new HashMap<>();
@@ -95,6 +110,16 @@ public class PreviewGui implements Listener {
                 gui.setItem(i, separator);
             }
 
+            if (viewer.hasPermission("invbackup.admin")) {
+                gui.setItem(SLOT_TOGGLE_INVENTORY, createToggleItem(PART_INVENTORY, true));
+                gui.setItem(SLOT_TOGGLE_ARMOR, createToggleItem(PART_ARMOR, true));
+                gui.setItem(SLOT_TOGGLE_EXP, createToggleItem(PART_EXP, true));
+                gui.setItem(SLOT_TOGGLE_LOCATION, createToggleItem(PART_LOCATION, false));
+                gui.setItem(SLOT_TOGGLE_ENDERCHEST, createToggleItem(PART_ENDERCHEST, true));
+                gui.setItem(SLOT_TOGGLE_HEALTH_FOOD, createToggleItem(PART_HEALTH_FOOD, false));
+                gui.setItem(SLOT_TOGGLE_EFFECTS, createToggleItem(PART_EFFECTS, false));
+            }
+
             // Row 6 slots 45-48: Armor (helmet, chestplate, leggings, boots)
             if (config.contains("inventory.armor")) {
                 ItemStack[] armor = SerializationUtil.itemStackArrayFromBase64(
@@ -136,7 +161,7 @@ public class PreviewGui implements Listener {
                         plugin.getLanguageManager().getGuiMessage("gui.preview.restore-items.name"),
                         plugin.getLanguageManager().getGuiMessage("gui.preview.restore-items.lore")));
 
-                // Slot 53: Full restore button
+                // Slot 53: Custom restore button
                 if ("full".equals(config.getString("meta.backup-level"))) {
                     gui.setItem(SLOT_RESTORE_FULL, createItem(Material.LIME_WOOL,
                             plugin.getLanguageManager().getGuiMessage("gui.preview.full-restore.name"),
@@ -158,7 +183,7 @@ public class PreviewGui implements Listener {
         }
 
         activeSessions.put(viewer.getUniqueId(),
-                new PreviewSession(targetUuid, snapshotId, gui, onBack));
+                new PreviewSession(targetUuid, snapshotId, gui, onBack, defaultRestoreParts()));
         viewer.openInventory(gui);
     }
 
@@ -221,13 +246,28 @@ public class PreviewGui implements Listener {
 
         // Restore minimal
         if (slot == SLOT_RESTORE_MINIMAL && player.hasPermission("invbackup.admin")) {
-            handleRestore(player, session, "minimal");
+            handleRestore(player, session, defaultRestoreParts());
             return;
         }
 
-        // Restore full
+        // Restore custom
         if (slot == SLOT_RESTORE_FULL && player.hasPermission("invbackup.admin")) {
-            handleRestore(player, session, "full");
+            handleRestore(player, session, session.selectedParts);
+            return;
+        }
+
+        if (player.hasPermission("invbackup.admin")) {
+            switch (slot) {
+                case SLOT_TOGGLE_INVENTORY -> togglePart(player, session, PART_INVENTORY);
+                case SLOT_TOGGLE_ARMOR -> togglePart(player, session, PART_ARMOR);
+                case SLOT_TOGGLE_EXP -> togglePart(player, session, PART_EXP);
+                case SLOT_TOGGLE_LOCATION -> togglePart(player, session, PART_LOCATION);
+                case SLOT_TOGGLE_ENDERCHEST -> togglePart(player, session, PART_ENDERCHEST);
+                case SLOT_TOGGLE_HEALTH_FOOD -> togglePart(player, session, PART_HEALTH_FOOD);
+                case SLOT_TOGGLE_EFFECTS -> togglePart(player, session, PART_EFFECTS);
+                default -> {
+                }
+            }
         }
     }
 
@@ -256,12 +296,19 @@ public class PreviewGui implements Listener {
         nameInputSessions.remove(playerId);
     }
 
-    private void handleRestore(Player viewer, PreviewSession session, String level) {
+    private void handleRestore(Player viewer, PreviewSession session, List<String> allowedPartsRaw) {
         viewer.closeInventory();
         activeSessions.remove(viewer.getUniqueId());
 
         if (!viewer.hasPermission("invbackup.admin")) {
             viewer.sendMessage(plugin.getMessage("no-permission"));
+            return;
+        }
+
+        List<String> allowedParts = normalizeParts(allowedPartsRaw);
+        if (allowedParts.isEmpty()) {
+            viewer.sendMessage(plugin.getLanguageManager()
+                    .getGuiMessage("gui.preview.custom-restore-empty"));
             return;
         }
 
@@ -275,7 +322,7 @@ public class PreviewGui implements Listener {
         // Queue a restore request instead of restoring immediately.
         RestoreRequest request = plugin.getRequestManager().createRequestForTarget(
                 targetUuid.toString(), targetName, session.snapshotId,
-                adminName, adminUuid);
+                adminName, adminUuid, allowedParts);
 
         Player target = Bukkit.getPlayer(targetUuid);
         if (target != null && target.isOnline()) {
@@ -330,7 +377,7 @@ public class PreviewGui implements Listener {
         PreviewSession session = activeSessions.get(viewer.getUniqueId());
         if (session == null) {
             // Opened from external GUI (e.g. RestoreGui) - create a lightweight session
-            session = new PreviewSession(targetUuid, snapshotId, gui, onBack, null);
+            session = new PreviewSession(targetUuid, snapshotId, gui, onBack, null, defaultRestoreParts());
             activeSessions.put(viewer.getUniqueId(), session);
         } else {
             session.inventory = gui;
@@ -342,12 +389,20 @@ public class PreviewGui implements Listener {
     }
 
     private void startCrossRestoreChatSession(Player admin, PreviewSession session) {
+        List<String> selected = normalizeParts(session.selectedParts);
+        if (selected.isEmpty()) {
+            admin.sendMessage(plugin.getLanguageManager()
+                    .getGuiMessage("gui.preview.custom-restore-empty"));
+            return;
+        }
+
         admin.closeInventory();
         activeSessions.remove(admin.getUniqueId());
 
         CrossNameInputSession ns = new CrossNameInputSession();
         ns.sourceUuid = session.targetUuid;
         ns.snapshotId = session.snapshotId;
+        ns.allowedParts = selected;
         nameInputSessions.put(admin.getUniqueId(), ns);
 
         admin.sendMessage(plugin.getLanguageManager().getGuiMessage("gui.preview.cross-restore.chat-prompt"));
@@ -411,7 +466,8 @@ public class PreviewGui implements Listener {
         RestoreRequest request = plugin.getRequestManager().createRequest(
                 sourceUuid, sourceName,
                 targetUuid, targetName,
-                snapshotId, adminName, adminUuid);
+                snapshotId, adminName, adminUuid,
+                ns.allowedParts);
 
         final String resolvedTargetName = targetName;
         final Player onlineRef = online;
@@ -472,10 +528,6 @@ public class PreviewGui implements Listener {
                 "gui.preview.status.exp",
                 "{exp}", String.format("%.2f", config.getDouble("status.exp", 0))
         ));
-        lore.add(plugin.getLanguageManager().getGuiMessage(
-                "gui.preview.status.gamemode",
-                "{gamemode}", config.getString("status.gamemode", "N/A")
-        ));
 
         if (config.contains("status.location")) {
             String loc = String.format("%.1f, %.1f, %.1f (%s)",
@@ -511,22 +563,101 @@ public class PreviewGui implements Listener {
         Inventory inventory;
         final Inventory mainInventory;
         final Runnable onBack;
+        final List<String> selectedParts = new ArrayList<>();
 
-        PreviewSession(String targetUuid, String snapshotId, Inventory inventory, Runnable onBack) {
-            this(targetUuid, snapshotId, inventory, onBack, inventory);
+        PreviewSession(String targetUuid, String snapshotId, Inventory inventory, Runnable onBack,
+                       List<String> selectedParts) {
+            this(targetUuid, snapshotId, inventory, onBack, inventory, selectedParts);
         }
 
-        PreviewSession(String targetUuid, String snapshotId, Inventory inventory, Runnable onBack, Inventory mainInventory) {
+        PreviewSession(String targetUuid, String snapshotId, Inventory inventory, Runnable onBack,
+                       Inventory mainInventory, List<String> selectedParts) {
             this.targetUuid = targetUuid;
             this.snapshotId = snapshotId;
             this.inventory = inventory;
             this.mainInventory = mainInventory;
             this.onBack = onBack;
+            this.selectedParts.addAll(selectedParts);
         }
     }
 
     private static class CrossNameInputSession {
         String sourceUuid;
         String snapshotId;
+        List<String> allowedParts = new ArrayList<>();
+    }
+
+    private void togglePart(Player player, PreviewSession session, String part) {
+        if (session.selectedParts.contains(part)) {
+            session.selectedParts.remove(part);
+        } else {
+            session.selectedParts.add(part);
+        }
+        updateToggleButtons(session);
+        player.updateInventory();
+    }
+
+    private void updateToggleButtons(PreviewSession session) {
+        Inventory inv = session.inventory;
+        if (inv == null) {
+            return;
+        }
+        inv.setItem(SLOT_TOGGLE_INVENTORY, createToggleItem(PART_INVENTORY,
+                session.selectedParts.contains(PART_INVENTORY)));
+        inv.setItem(SLOT_TOGGLE_ARMOR, createToggleItem(PART_ARMOR,
+                session.selectedParts.contains(PART_ARMOR)));
+        inv.setItem(SLOT_TOGGLE_EXP, createToggleItem(PART_EXP,
+                session.selectedParts.contains(PART_EXP)));
+        inv.setItem(SLOT_TOGGLE_LOCATION, createToggleItem(PART_LOCATION,
+                session.selectedParts.contains(PART_LOCATION)));
+        inv.setItem(SLOT_TOGGLE_ENDERCHEST, createToggleItem(PART_ENDERCHEST,
+                session.selectedParts.contains(PART_ENDERCHEST)));
+        inv.setItem(SLOT_TOGGLE_HEALTH_FOOD, createToggleItem(PART_HEALTH_FOOD,
+                session.selectedParts.contains(PART_HEALTH_FOOD)));
+        inv.setItem(SLOT_TOGGLE_EFFECTS, createToggleItem(PART_EFFECTS,
+                session.selectedParts.contains(PART_EFFECTS)));
+    }
+
+    private ItemStack createToggleItem(String part, boolean selected) {
+        Material mat = selected ? Material.LIME_WOOL : toggleBaseMaterial(part);
+        Component state = plugin.getLanguageManager().getGuiMessage(
+                selected ? "gui.preview.custom-toggle.selected"
+                        : "gui.preview.custom-toggle.unselected");
+        return createItem(mat,
+                plugin.getLanguageManager().getGuiMessage("gui.preview.custom-toggle." + part),
+                state);
+    }
+
+    private Material toggleBaseMaterial(String part) {
+        return switch (part) {
+            case PART_INVENTORY -> Material.CHEST;
+            case PART_ARMOR -> Material.IRON_CHESTPLATE;
+            case PART_EXP -> Material.EXPERIENCE_BOTTLE;
+            case PART_LOCATION -> Material.COMPASS;
+            case PART_ENDERCHEST -> Material.ENDER_CHEST;
+            case PART_HEALTH_FOOD -> Material.GOLDEN_APPLE;
+            case PART_EFFECTS -> Material.POTION;
+            default -> Material.PAPER;
+        };
+    }
+
+    private static List<String> defaultRestoreParts() {
+        return List.of(PART_INVENTORY, PART_ARMOR, PART_EXP, PART_ENDERCHEST);
+    }
+
+    private static List<String> normalizeParts(List<String> source) {
+        List<String> normalized = new ArrayList<>();
+        if (source == null) {
+            return normalized;
+        }
+        for (String s : source) {
+            if (s == null) continue;
+            String key = s.trim().toLowerCase();
+            if (key.isEmpty()) continue;
+            if (!normalized.contains(key)) {
+                normalized.add(key);
+            }
+        }
+        return normalized;
     }
 }

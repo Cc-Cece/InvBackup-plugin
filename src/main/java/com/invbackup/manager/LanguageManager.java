@@ -5,17 +5,22 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.TextDecoration;
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import org.bukkit.configuration.file.YamlConfiguration;
+import org.bukkit.configuration.ConfigurationSection;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.util.HashSet;
+import java.util.Set;
 
 public class LanguageManager {
 
     private final InvBackup plugin;
     private YamlConfiguration langConfig;
     private String currentLang;
+    private final Set<String> warnedInvalidTypeKeys = new HashSet<>();
 
     public LanguageManager(InvBackup plugin) {
         this.plugin = plugin;
@@ -23,6 +28,7 @@ public class LanguageManager {
     }
 
     public void reload() {
+        warnedInvalidTypeKeys.clear();
         currentLang = plugin.getConfig().getString("language", "zh_CN");
 
         // Save built-in language files
@@ -41,7 +47,7 @@ public class LanguageManager {
             langFile = new File(plugin.getDataFolder(), "lang/zh_CN.yml");
         }
 
-        langConfig = YamlConfiguration.loadConfiguration(langFile);
+        langConfig = loadRuntimeLanguageFile(langFile, currentLang);
 
         // Merge with defaults to fill missing keys
         InputStream defaultStream = plugin.getResource(
@@ -50,6 +56,15 @@ public class LanguageManager {
             YamlConfiguration defaults = YamlConfiguration.loadConfiguration(
                     new InputStreamReader(defaultStream, StandardCharsets.UTF_8));
             langConfig.setDefaults(defaults);
+            boolean changed = reconcileStringTypeMismatch(defaults);
+            if (changed) {
+                try {
+                    langConfig.save(langFile);
+                } catch (Exception e) {
+                    plugin.getLogger().warning("Failed to persist repaired language file: "
+                            + langFile.getName());
+                }
+            }
         }
     }
 
@@ -61,10 +76,67 @@ public class LanguageManager {
         }
     }
 
+    private YamlConfiguration loadRuntimeLanguageFile(File langFile, String langCode) {
+        try {
+            return loadYamlStrict(langFile);
+        } catch (Exception first) {
+            plugin.getLogger().warning("Cannot parse " + langFile.getPath()
+                    + ". Backing it up and restoring bundled " + langCode + ".yml");
+            backupBrokenLanguageFile(langFile);
+            restoreBundledLanguage(langCode);
+            try {
+                return loadYamlStrict(langFile);
+            } catch (Exception second) {
+                plugin.getLogger().severe("Failed to recover language file "
+                        + langFile.getPath() + ": " + second.getMessage());
+                return new YamlConfiguration();
+            }
+        }
+    }
+
+    private static YamlConfiguration loadYamlStrict(File file) throws Exception {
+        YamlConfiguration config = new YamlConfiguration();
+        try (InputStreamReader reader = new InputStreamReader(
+                new FileInputStream(file), StandardCharsets.UTF_8)) {
+            config.load(reader);
+        }
+        return config;
+    }
+
+    private void backupBrokenLanguageFile(File langFile) {
+        if (!langFile.exists()) {
+            return;
+        }
+
+        File backup = new File(langFile.getParentFile(),
+                langFile.getName() + ".broken." + System.currentTimeMillis());
+        if (!langFile.renameTo(backup)) {
+            plugin.getLogger().warning("Failed to backup broken language file: "
+                    + langFile.getName());
+            if (!langFile.delete()) {
+                plugin.getLogger().warning("Also failed to delete broken language file: "
+                        + langFile.getName());
+            }
+            return;
+        }
+
+        plugin.getLogger().warning("Backed up broken language file to: "
+                + backup.getName());
+    }
+
+    private void restoreBundledLanguage(String langCode) {
+        try {
+            plugin.saveResource("lang/" + langCode + ".yml", true);
+        } catch (Exception e) {
+            plugin.getLogger().warning("Failed to restore bundled language file "
+                    + langCode + ".yml: " + e.getMessage());
+        }
+    }
+
     public Component getMessage(String key) {
-        String prefix = langConfig.getString("prefix",
+        String prefix = resolveLangString("prefix",
                 "&7[&bInvBackup&7] ");
-        String msg = langConfig.getString(key, key);
+        String msg = resolveLangString(key, key);
         return LegacyComponentSerializer.legacyAmpersand()
                 .deserialize(prefix + msg);
     }
@@ -75,7 +147,7 @@ public class LanguageManager {
      * Example: getGuiMessage("gui.admin.title-players", "{page}","1","{total}","3")
      */
     public Component getGuiMessage(String key, String... replacements) {
-        String msg = langConfig.getString(key, key);
+        String msg = resolveLangString(key, key);
         msg = applyReplacements(msg, replacements);
         return LegacyComponentSerializer.legacyAmpersand()
                 .deserialize(msg)
@@ -83,7 +155,7 @@ public class LanguageManager {
     }
 
     public String getRawMessage(String key) {
-        return langConfig.getString(key, key);
+        return resolveLangString(key, key);
     }
 
     public String getCurrentLang() {
@@ -101,5 +173,74 @@ public class LanguageManager {
             }
         }
         return msg;
+    }
+
+    private String resolveLangString(String key, String fallback) {
+        if (langConfig == null) {
+            return fallback;
+        }
+
+        Object raw = langConfig.get(key);
+        if (raw instanceof String s) {
+            return s;
+        }
+
+        if (raw instanceof ConfigurationSection section) {
+            String nested = pickSectionText(section);
+            if (nested != null && !nested.isBlank()) {
+                return nested;
+            }
+
+            warnInvalidTypeOnce(key);
+            return fallback;
+        }
+
+        if (raw != null) {
+            warnInvalidTypeOnce(key);
+            return String.valueOf(raw);
+        }
+
+        String fromDefaults = langConfig.getString(key);
+        return fromDefaults != null ? fromDefaults : fallback;
+    }
+
+    private static String pickSectionText(ConfigurationSection section) {
+        String[] preferredKeys = {"name", "text", "title", "value", "label"};
+        for (String k : preferredKeys) {
+            if (section.isString(k)) {
+                return section.getString(k);
+            }
+        }
+        return null;
+    }
+
+    private void warnInvalidTypeOnce(String key) {
+        if (warnedInvalidTypeKeys.add(key)) {
+            plugin.getLogger().warning("Language key '" + key
+                    + "' is not a string in " + currentLang
+                    + ".yml; using fallback.");
+        }
+    }
+
+    /**
+     * Repair runtime lang config when an existing key has wrong type
+     * (e.g. section instead of string), which otherwise blocks defaults.
+     */
+    private boolean reconcileStringTypeMismatch(YamlConfiguration defaults) {
+        boolean changed = false;
+        for (String key : defaults.getKeys(true)) {
+            if (!defaults.isString(key)) {
+                continue;
+            }
+            if (langConfig.isConfigurationSection(key)) {
+                String def = defaults.getString(key);
+                if (def != null) {
+                    langConfig.set(key, def);
+                    changed = true;
+                    warnInvalidTypeOnce(key);
+                }
+            }
+        }
+        return changed;
     }
 }

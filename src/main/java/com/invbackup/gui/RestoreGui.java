@@ -10,7 +10,6 @@ import net.kyori.adventure.text.event.HoverEvent;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextDecoration;
 import org.bukkit.Bukkit;
-import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
@@ -47,7 +46,7 @@ public class RestoreGui implements Listener {
     private static final int SLOT_EXP = 38;
     private static final int SLOT_LOCATION = 39;
     private static final int SLOT_EFFECTS = 40;
-    private static final int SLOT_GAMEMODE = 41;
+    private static final int SLOT_INVENTORY_TOGGLE = 41;
     private static final int SLOT_ENDERCHEST = 42;
     private static final int SLOT_RESTORE_ALL = 44;
     private static final int SLOT_NAME_INPUT = 43;
@@ -55,6 +54,14 @@ public class RestoreGui implements Listener {
     private final InvBackup plugin;
     private final Map<UUID, RestoreSession> activeSessions = new HashMap<>();
     private final Map<UUID, NameInputSession> nameInputSessions = new HashMap<>();
+
+    private static final String PART_INVENTORY = "inventory";
+    private static final String PART_ARMOR = "armor";
+    private static final String PART_EXP = "exp";
+    private static final String PART_LOCATION = "location";
+    private static final String PART_ENDERCHEST = "enderchest";
+    private static final String PART_HEALTH_FOOD = "health_food";
+    private static final String PART_EFFECTS = "effects";
 
     public RestoreGui(InvBackup plugin) {
         this.plugin = plugin;
@@ -84,6 +91,7 @@ public class RestoreGui implements Listener {
         Inventory gui = Bukkit.createInventory(null, 54, title);
 
         RestoreSession session = new RestoreSession(targetUuid, snapshotId, gui, requestId);
+        session.allowedParts = resolveAllowedParts(player, requestId);
 
         try {
             // Row 1-4: Inventory content (slots 0-35)
@@ -103,7 +111,7 @@ public class RestoreGui implements Listener {
             }
 
             // Row 5 slots 36-44: Status buttons + separator
-            fillStatusButtons(gui, config, tracker, isAdmin);
+            fillStatusButtons(gui, config, tracker, isAdmin, session);
 
             // Row 6 slots 45-49: Armor + offhand
             if (config.contains("inventory.armor")) {
@@ -188,9 +196,16 @@ public class RestoreGui implements Listener {
     }
 
     private void fillStatusButtons(Inventory gui, YamlConfiguration config,
-                                   RestoredTracker tracker, boolean isAdmin) {
+                                   RestoredTracker tracker, boolean isAdmin,
+                                   RestoreSession session) {
         boolean hasFull = config.contains("status");
         String na = plugin.getLanguageManager().getRawMessage("gui.common.na");
+        boolean canHealthFood = canRestorePart(session, PART_HEALTH_FOOD);
+        boolean canExp = canRestorePart(session, PART_EXP);
+        boolean canLocation = canRestorePart(session, PART_LOCATION);
+        boolean canEffects = canRestorePart(session, PART_EFFECTS);
+        boolean canEnderchest = canRestorePart(session, PART_ENDERCHEST);
+        boolean canInventory = canRestorePart(session, PART_INVENTORY);
 
         // Health
         gui.setItem(SLOT_HEALTH, createStatusButton(
@@ -199,14 +214,14 @@ public class RestoreGui implements Listener {
                 hasFull ? String.format("%.1f/%.1f",
                         config.getDouble("status.health", 0),
                         config.getDouble("status.max-health", 20)) : na,
-                "health", tracker, isAdmin));
+                "health", tracker, isAdmin, canHealthFood));
 
         // Food
         gui.setItem(SLOT_FOOD, createStatusButton(
                 Material.BREAD,
                 plugin.getLanguageManager().getGuiMessage("gui.restore.status.food"),
                 hasFull ? String.valueOf(config.getInt("status.food", 0)) : na,
-                "food", tracker, isAdmin));
+                "food", tracker, isAdmin, canHealthFood));
 
         // Exp
         gui.setItem(SLOT_EXP, createStatusButton(
@@ -215,7 +230,7 @@ public class RestoreGui implements Listener {
                 hasFull ? plugin.getLanguageManager().getRawMessage("gui.restore.status.exp-value")
                         .replace("{level}", String.valueOf(config.getInt("status.level", 0)))
                         : na,
-                "exp", tracker, isAdmin));
+                "exp", tracker, isAdmin, canExp));
 
         // Location
         String locStr = na;
@@ -230,7 +245,7 @@ public class RestoreGui implements Listener {
                 Material.COMPASS,
                 plugin.getLanguageManager().getGuiMessage("gui.restore.status.location"),
                 locStr,
-                "location", tracker, isAdmin));
+                "location", tracker, isAdmin, canLocation));
 
         // Effects
         gui.setItem(SLOT_EFFECTS, createStatusButton(
@@ -239,19 +254,22 @@ public class RestoreGui implements Listener {
                 hasFull ? plugin.getLanguageManager().getRawMessage("gui.restore.status.effects-value")
                         .replace("{count}", String.valueOf(config.getStringList("status.effects").size()))
                         : na,
-                "effects", tracker, isAdmin));
+                "effects", tracker, isAdmin, canEffects));
 
-        // Gamemode
-        gui.setItem(SLOT_GAMEMODE, createStatusButton(
-                Material.COMMAND_BLOCK,
-                plugin.getLanguageManager().getGuiMessage("gui.restore.status.gamemode"),
-                hasFull ? config.getString("status.gamemode", na) : na,
-                "gamemode", tracker, isAdmin));
+        // Inventory toggle info (inventory + hotbar + offhand)
+        gui.setItem(SLOT_INVENTORY_TOGGLE, createItem(
+                canInventory ? Material.CHEST : Material.GRAY_DYE,
+                plugin.getLanguageManager().getGuiMessage("gui.preview.custom-toggle.inventory"),
+                plugin.getLanguageManager().getGuiMessage(
+                        canInventory ? "gui.preview.custom-toggle.selected"
+                                : "gui.restore.custom-toggle.locked")));
 
         // Enderchest
-        gui.setItem(SLOT_ENDERCHEST, createItem(Material.ENDER_CHEST,
+        gui.setItem(SLOT_ENDERCHEST, createItem(canEnderchest ? Material.ENDER_CHEST : Material.GRAY_DYE,
                 plugin.getLanguageManager().getGuiMessage("gui.restore.enderchest.name"),
-                plugin.getLanguageManager().getGuiMessage("gui.restore.enderchest.lore")));
+                plugin.getLanguageManager().getGuiMessage(canEnderchest
+                        ? "gui.restore.enderchest.lore"
+                        : "gui.restore.custom-toggle.locked")));
 
         // Slot 43: reserved (no cross-player forwarding from RestoreGui; use PreviewGui instead)
         gui.setItem(SLOT_NAME_INPUT, createItem(Material.GRAY_STAINED_GLASS_PANE,
@@ -306,36 +324,73 @@ public class RestoreGui implements Listener {
 
         // Inventory item claim (slots 0-35)
         if (slot >= 0 && slot < 36) {
+            if (!canRestorePart(session, PART_INVENTORY)) {
+                player.sendMessage(plugin.getLanguageManager()
+                        .getGuiMessage("gui.restore.custom-toggle.locked"));
+                return;
+            }
             handleItemClaim(player, session, tracker, slot, isAdmin);
             return;
         }
 
         // Armor claim (slots 45-48)
         if (slot >= SLOT_HELMET && slot <= SLOT_BOOTS) {
+            if (!canRestorePart(session, PART_ARMOR)) {
+                player.sendMessage(plugin.getLanguageManager()
+                        .getGuiMessage("gui.restore.custom-toggle.locked"));
+                return;
+            }
             handleArmorClaim(player, session, tracker, slot, isAdmin);
             return;
         }
 
         // Offhand claim (slot 49)
         if (slot == SLOT_OFFHAND) {
+            if (!canRestorePart(session, PART_INVENTORY)) {
+                player.sendMessage(plugin.getLanguageManager()
+                        .getGuiMessage("gui.restore.custom-toggle.locked"));
+                return;
+            }
             handleOffhandClaim(player, session, tracker, isAdmin);
             return;
         }
 
         // Status buttons
         if (slot == SLOT_HEALTH) {
+            if (!canRestorePart(session, PART_HEALTH_FOOD)) {
+                player.sendMessage(plugin.getLanguageManager().getGuiMessage("gui.restore.custom-toggle.locked"));
+                return;
+            }
             handleStatusRestore(player, session, tracker, "health", isAdmin);
         } else if (slot == SLOT_FOOD) {
+            if (!canRestorePart(session, PART_HEALTH_FOOD)) {
+                player.sendMessage(plugin.getLanguageManager().getGuiMessage("gui.restore.custom-toggle.locked"));
+                return;
+            }
             handleStatusRestore(player, session, tracker, "food", isAdmin);
         } else if (slot == SLOT_EXP) {
+            if (!canRestorePart(session, PART_EXP)) {
+                player.sendMessage(plugin.getLanguageManager().getGuiMessage("gui.restore.custom-toggle.locked"));
+                return;
+            }
             handleStatusRestore(player, session, tracker, "exp", isAdmin);
         } else if (slot == SLOT_LOCATION) {
+            if (!canRestorePart(session, PART_LOCATION)) {
+                player.sendMessage(plugin.getLanguageManager().getGuiMessage("gui.restore.custom-toggle.locked"));
+                return;
+            }
             handleStatusRestore(player, session, tracker, "location", isAdmin);
         } else if (slot == SLOT_EFFECTS) {
+            if (!canRestorePart(session, PART_EFFECTS)) {
+                player.sendMessage(plugin.getLanguageManager().getGuiMessage("gui.restore.custom-toggle.locked"));
+                return;
+            }
             handleStatusRestore(player, session, tracker, "effects", isAdmin);
-        } else if (slot == SLOT_GAMEMODE) {
-            handleStatusRestore(player, session, tracker, "gamemode", isAdmin);
         } else if (slot == SLOT_ENDERCHEST) {
+            if (!canRestorePart(session, PART_ENDERCHEST)) {
+                player.sendMessage(plugin.getLanguageManager().getGuiMessage("gui.restore.custom-toggle.locked"));
+                return;
+            }
             // Open ender chest sub-GUI (future: could be interactive too)
             activeSessions.remove(player.getUniqueId());
             player.closeInventory();
@@ -506,13 +561,6 @@ public class RestoreGui implements Listener {
                     }
                 }
             }
-            case "gamemode" -> {
-                try {
-                    player.setGameMode(GameMode.valueOf(
-                            config.getString("status.gamemode")));
-                } catch (IllegalArgumentException ignored) {
-                }
-            }
         }
 
         tracker.markStatusRestored(key);
@@ -539,13 +587,20 @@ public class RestoreGui implements Listener {
                 .getString("restore-request.restore-all-overflow", "drop")
                 .toLowerCase();
         boolean dropOverflow = "drop".equals(overflowMode);
+        boolean canInventory = canRestorePart(session, PART_INVENTORY);
+        boolean canArmor = canRestorePart(session, PART_ARMOR);
+        boolean canEnderchest = canRestorePart(session, PART_ENDERCHEST);
+        boolean canHealthFood = canRestorePart(session, PART_HEALTH_FOOD);
+        boolean canExp = canRestorePart(session, PART_EXP);
+        boolean canLocation = canRestorePart(session, PART_LOCATION);
+        boolean canEffects = canRestorePart(session, PART_EFFECTS);
 
         boolean anyRestored = false;
         boolean anyFailed = false;
 
         // Restore main inventory (slots 0-35) without overwriting existing items.
         try {
-            if (config.contains("inventory.content")) {
+            if (canInventory && config.contains("inventory.content")) {
                 ItemStack[] contents = SerializationUtil.itemStackArrayFromBase64(
                         config.getString("inventory.content"));
                 for (int i = 0; i < Math.min(contents.length, 36); i++) {
@@ -580,7 +635,7 @@ public class RestoreGui implements Listener {
             }
 
             // Restore armor (boots[0], leggings[1], chestplate[2], helmet[3])
-            if (config.contains("inventory.armor")) {
+            if (canArmor && config.contains("inventory.armor")) {
                 ItemStack[] armor = SerializationUtil.itemStackArrayFromBase64(
                         config.getString("inventory.armor"));
                 for (int armorIndex = 0; armor != null
@@ -612,7 +667,7 @@ public class RestoreGui implements Listener {
             }
 
             // Restore offhand
-            if (config.contains("inventory.offhand")) {
+            if (canInventory && config.contains("inventory.offhand")) {
                 ItemStack[] offhandArr = SerializationUtil.itemStackArrayFromBase64(
                         config.getString("inventory.offhand"));
                 if (offhandArr.length > 0 && offhandArr[0] != null) {
@@ -641,7 +696,7 @@ public class RestoreGui implements Listener {
             }
 
             // Restore ender chest directly (no overflow to main inventory)
-            if (config.contains("inventory.enderchest")) {
+            if (canEnderchest && config.contains("inventory.enderchest")) {
                 ItemStack[] ec = SerializationUtil.itemStackArrayFromBase64(
                         config.getString("inventory.enderchest"));
                 player.getEnderChest().setContents(ec);
@@ -658,10 +713,10 @@ public class RestoreGui implements Listener {
         }
 
         // Restore status if full snapshot
-        String restoreLevel = config.contains("status") ? "full" : "minimal";
-        if ("full".equalsIgnoreCase(restoreLevel) && config.contains("status")) {
-            restoreAllStatus(player, config, tracker, isAdmin);
-            anyRestored = true;
+        if (config.contains("status")) {
+            boolean restoredStatus = restoreAllStatus(player, config, tracker, isAdmin,
+                    canHealthFood, canExp, canLocation, canEffects);
+            anyRestored = anyRestored || restoredStatus;
         }
 
         player.closeInventory();
@@ -677,10 +732,13 @@ public class RestoreGui implements Listener {
         }
     }
 
-    private void restoreAllStatus(Player player, YamlConfiguration config,
-                                  RestoredTracker tracker, boolean isAdmin) {
+    private boolean restoreAllStatus(Player player, YamlConfiguration config,
+                                     RestoredTracker tracker, boolean isAdmin,
+                                     boolean canHealthFood, boolean canExp,
+                                     boolean canLocation, boolean canEffects) {
+        boolean restoredAny = false;
         // Health + saturation
-        if (config.contains("status.health")) {
+        if (canHealthFood && config.contains("status.health")) {
             player.setHealth(config.getDouble("status.health"));
             if (config.contains("status.saturation")) {
                 player.setSaturation((float) config.getDouble("status.saturation"));
@@ -688,27 +746,30 @@ public class RestoreGui implements Listener {
             if (!isAdmin || !tracker.isStatusRestored("health")) {
                 tracker.markStatusRestored("health");
             }
+            restoredAny = true;
         }
 
         // Food
-        if (config.contains("status.food")) {
+        if (canHealthFood && config.contains("status.food")) {
             player.setFoodLevel(config.getInt("status.food"));
             if (!isAdmin || !tracker.isStatusRestored("food")) {
                 tracker.markStatusRestored("food");
             }
+            restoredAny = true;
         }
 
         // Exp / level
-        if (config.contains("status.exp") || config.contains("status.level")) {
+        if (canExp && (config.contains("status.exp") || config.contains("status.level"))) {
             player.setExp((float) config.getDouble("status.exp", player.getExp()));
             player.setLevel(config.getInt("status.level", player.getLevel()));
             if (!isAdmin || !tracker.isStatusRestored("exp")) {
                 tracker.markStatusRestored("exp");
             }
+            restoredAny = true;
         }
 
         // Location
-        if (config.contains("status.location")) {
+        if (canLocation && config.contains("status.location")) {
             org.bukkit.World world = Bukkit.getWorld(
                     config.getString("status.location.world", ""));
             if (world != null) {
@@ -721,11 +782,12 @@ public class RestoreGui implements Listener {
                 if (!isAdmin || !tracker.isStatusRestored("location")) {
                     tracker.markStatusRestored("location");
                 }
+                restoredAny = true;
             }
         }
 
         // Effects
-        if (config.contains("status.effects")) {
+        if (canEffects && config.contains("status.effects")) {
             for (PotionEffect eff : player.getActivePotionEffects()) {
                 player.removePotionEffect(eff.getType());
             }
@@ -744,19 +806,9 @@ public class RestoreGui implements Listener {
             if (!isAdmin || !tracker.isStatusRestored("effects")) {
                 tracker.markStatusRestored("effects");
             }
+            restoredAny = true;
         }
-
-        // Gamemode
-        if (config.contains("status.gamemode")) {
-            try {
-                player.setGameMode(GameMode.valueOf(
-                        config.getString("status.gamemode")));
-                if (!isAdmin || !tracker.isStatusRestored("gamemode")) {
-                    tracker.markStatusRestored("gamemode");
-                }
-            } catch (IllegalArgumentException ignored) {
-            }
-        }
+        return restoredAny;
     }
 
     @EventHandler
@@ -926,28 +978,66 @@ public class RestoreGui implements Listener {
 
     private ItemStack createStatusButton(Material material, Component name,
                                          String value, String key,
-                                         RestoredTracker tracker, boolean isAdmin) {
+                                         RestoredTracker tracker, boolean isAdmin,
+                                         boolean enabled) {
         boolean restored = !isAdmin && tracker.isStatusRestored(key);
-        NamedTextColor color = restored ? NamedTextColor.DARK_GRAY : NamedTextColor.AQUA;
+        NamedTextColor color = !enabled
+                ? NamedTextColor.DARK_GRAY
+                : (restored ? NamedTextColor.DARK_GRAY : NamedTextColor.AQUA);
 
         List<Component> lore = new ArrayList<>();
         lore.add(plugin.getLanguageManager().getGuiMessage(
                 "gui.restore.status.value",
                 "{value}", value
         ));
-        if (restored) {
+        if (!enabled) {
+            lore.add(plugin.getLanguageManager().getGuiMessage("gui.restore.custom-toggle.locked"));
+        } else if (restored) {
             lore.add(plugin.getLanguageManager().getGuiMessage("gui.restore.status.already-restored"));
         } else {
             lore.add(plugin.getLanguageManager().getGuiMessage("gui.restore.status.click-restore"));
         }
 
-        Material display = restored ? Material.GRAY_DYE : material;
+        Material display = (!enabled || restored) ? Material.GRAY_DYE : material;
         ItemStack item = new ItemStack(display);
         ItemMeta meta = item.getItemMeta();
         meta.displayName(name.color(color).decoration(TextDecoration.ITALIC, false));
         meta.lore(lore);
         item.setItemMeta(meta);
         return item;
+    }
+
+    private List<String> resolveAllowedParts(Player player, String requestId) {
+        if (requestId == null || requestId.isBlank()) {
+            return new ArrayList<>();
+        }
+        RestoreRequest req = plugin.getRequestManager()
+                .findRequest(player.getUniqueId().toString(), requestId);
+        if (req == null || req.allowedParts == null) {
+            return new ArrayList<>();
+        }
+        return normalizeParts(req.allowedParts);
+    }
+
+    private boolean canRestorePart(RestoreSession session, String part) {
+        if (session.allowedParts == null || session.allowedParts.isEmpty()) {
+            return true; // legacy requests or admin-opened UI
+        }
+        return session.allowedParts.contains(part);
+    }
+
+    private static List<String> normalizeParts(List<String> raw) {
+        List<String> normalized = new ArrayList<>();
+        if (raw == null) return normalized;
+        for (String s : raw) {
+            if (s == null) continue;
+            String k = s.trim().toLowerCase();
+            if (k.isEmpty()) continue;
+            if (!normalized.contains(k)) {
+                normalized.add(k);
+            }
+        }
+        return normalized;
     }
 
     private ItemStack createItem(Material material, Component name,
@@ -969,6 +1059,7 @@ public class RestoreGui implements Listener {
         final String requestId;
         final Map<Integer, ItemStack> inventoryItems = new HashMap<>();
         final Map<Integer, ItemStack> armorItems = new HashMap<>();
+        List<String> allowedParts = new ArrayList<>();
         ItemStack offhandItem;
         YamlConfiguration config;
         final Inventory inventory;

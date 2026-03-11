@@ -15,6 +15,9 @@ public class RestoreRequest {
     public String requestedByUuid;
     public long timestamp;
     public String status; // pending, accepted, declined, expired, revoked
+    // Allowed restore parts for this request.
+    // Empty = legacy behavior (no restriction).
+    public java.util.List<String> allowedParts;
     // Timestamp until which RestoreGui can be reopened after accepting
     // (0 = only first open is allowed)
     public long openExpiredAt;
@@ -37,5 +40,6 @@ public class RestoreRequest {
         this.timestamp = System.currentTimeMillis();
         this.status = "pending";
         this.openExpiredAt = 0L;
+        this.allowedParts = new java.util.ArrayList<>();
     }
 }
