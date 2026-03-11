@@ -13,6 +13,75 @@ auto-backup:
   # Auto save interval in seconds (0 = disabled)
   interval: 0
 
+# Backup strategy (new)
+# Notes:
+# 1) Old auto-backup.* and max-snapshots are still supported for backward compatibility.
+# 2) If backup-strategy.events.* exists, it takes precedence over legacy auto-backup.*.
+backup-strategy:
+  events:
+    on-join: false
+    on-quit: true
+    on-death: true
+    on-world-change: true
+    # true = only backup when entering Nether/End on world-change.
+    # false = backup on any world change.
+    world-change-only-nether-end: false
+    # 0 = disabled
+    interval-seconds: 0
+    # Optional explicit switch for interval task
+    on-interval: true
+
+  coalesce:
+    enabled: true
+    # Calls within this window are merged into one auto backup per player.
+    window-seconds: 45
+    # Trigger types that use coalescing
+    apply-triggers:
+      - interval
+      - join
+      - death
+      - world-change
+
+  retention:
+    enabled: true
+    # If true, max-snapshots still applies after tiered retention.
+    enforce-max-snapshots: true
+    # Tiered retention: older snapshots require larger minimum gap.
+    # max-age <= 0 means "no upper bound" (catch-all tier).
+    tiers:
+      recent:
+        max-age-hours: 24
+        min-gap-minutes: 15
+      daily:
+        max-age-days: 7
+        min-gap-hours: 1
+      weekly:
+        max-age-days: 30
+        min-gap-days: 1
+      archived:
+        max-age-days: 0
+        min-gap-days: 7
+
+  pre-restore:
+    # Create a safety backup before first restore action in Restore GUI and before forcerestore.
+    enabled: true
+    # If true and safety backup fails, block the restore action.
+    require-success: false
+    # Send a confirmation message with snapshot ID when safety backup succeeds.
+    notify-success: false
+    label: "Pre-restore safety backup"
+
+  high-risk:
+    # For /ib forcerestore
+    before-force-restore: true
+
+  integrity-check:
+    enabled: true
+    # Run integrity scan every N successful saves per player.
+    every-n-saves: 10
+    # true = remove corrupted snapshots; false = keep and mark as corrupt.
+    remove-corrupt: false
+
 # Maximum snapshots per player (0 = unlimited)
 max-snapshots: 20
 

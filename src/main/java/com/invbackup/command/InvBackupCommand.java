@@ -304,6 +304,25 @@ public class InvBackupCommand implements CommandExecutor {
             return;
         }
 
+        boolean backupBeforeForce = plugin.getConfig()
+                .getBoolean("backup-strategy.high-risk.before-force-restore", true);
+        if (backupBeforeForce) {
+            String actorName = sender instanceof Player p ? p.getName() : "Console";
+            String actorUuid = sender instanceof Player p ? p.getUniqueId().toString() : "CONSOLE";
+            String protectionId = plugin.getBackupManager().savePreRestoreSafetyBackup(
+                    target, actorName, actorUuid, "force-restore");
+
+            if (protectionId == null && plugin.getBackupManager().isPreRestoreRequireSuccess()) {
+                sender.sendMessage(plugin.getMessage("pre-restore-backup-failed"));
+                return;
+            }
+            if (protectionId != null && !protectionId.isEmpty()
+                    && plugin.getBackupManager().isPreRestoreNotifySuccess()) {
+                sender.sendMessage(plugin.getMessage("pre-restore-backup-created")
+                        .replaceText(b -> b.matchLiteral("{id}").replacement(protectionId)));
+            }
+        }
+
         String snapshotId = null;
         String restoreLevel = null;
 
@@ -852,6 +871,7 @@ public class InvBackupCommand implements CommandExecutor {
         plugin.reloadConfig();
         plugin.getLanguageManager().reload();
         plugin.getIdentityManager().reload();
+        plugin.restartAutoSaveTask();
         sender.sendMessage(plugin.getMessage("reload-success"));
     }
 

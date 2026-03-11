@@ -19,7 +19,12 @@ import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import java.io.File;
 import java.io.IOException;
 import java.text.SimpleDateFormat;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
 import java.util.LinkedHashSet;
@@ -35,12 +40,18 @@ import java.nio.file.Path;
 
 public class BackupManager {
 
+    private static final DateTimeFormatter SNAPSHOT_ID_TIME_FORMAT =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss");
+
     private final InvBackup plugin;
     private final File dataFolder;
     private final File currentFolder;
     private final File historyFolder;
     private final File importsFolder;
     private final File pendingFolder;
+    private final Map<UUID, PendingAutoBackup> pendingAutoBackups = new HashMap<>();
+    private final Map<UUID, Long> lastAutoBackupMillis = new HashMap<>();
+    private final Map<String, Integer> integritySaveCounter = new HashMap<>();
 
     public BackupManager(InvBackup plugin) {
         this.plugin = plugin;
@@ -196,6 +207,133 @@ public class BackupManager {
 
     // ========== Save ==========
 
+    public void requestAutoBackup(Player target, String triggerType, String label) {
+        if (target == null) {
+            return;
+        }
+
+        String normalizedTrigger = triggerType == null
+                ? "auto"
+                : triggerType.trim().toLowerCase();
+        String normalizedLabel = label == null ? "" : label;
+
+        UUID playerId = target.getUniqueId();
+        long now = System.currentTimeMillis();
+
+        long windowMs = getCoalesceWindowMillis();
+        if (windowMs <= 0 || !shouldCoalesceTrigger(normalizedTrigger)) {
+            String id = saveBackup(target, "Server", "CONSOLE",
+                    normalizedTrigger, normalizedLabel);
+            if (id != null) {
+                lastAutoBackupMillis.put(playerId, now);
+            }
+            return;
+        }
+
+        Long lastAt = lastAutoBackupMillis.get(playerId);
+        if (lastAt == null || now - lastAt >= windowMs) {
+            String id = saveBackup(target, "Server", "CONSOLE",
+                    normalizedTrigger, normalizedLabel);
+            if (id != null) {
+                lastAutoBackupMillis.put(playerId, now);
+            }
+            return;
+        }
+
+        long dueAt = lastAt + windowMs;
+        long delayMs = Math.max(1000L, dueAt - now);
+        long delayTicks = Math.max(1L, (delayMs + 49L) / 50L);
+
+        PendingAutoBackup previous = pendingAutoBackups.remove(playerId);
+        if (previous != null) {
+            Bukkit.getScheduler().cancelTask(previous.taskId);
+        }
+
+        PendingAutoBackup pending = new PendingAutoBackup();
+        pending.triggerType = normalizedTrigger;
+        pending.label = normalizedLabel;
+        pending.dueAt = dueAt;
+        pending.taskId = Bukkit.getScheduler().scheduleSyncDelayedTask(plugin, () -> {
+            PendingAutoBackup live = pendingAutoBackups.remove(playerId);
+            if (live == null) {
+                return;
+            }
+            Player online = Bukkit.getPlayer(playerId);
+            if (online == null || !online.isOnline()) {
+                return;
+            }
+            String id = saveBackup(online, "Server", "CONSOLE",
+                    live.triggerType, live.label);
+            if (id != null) {
+                lastAutoBackupMillis.put(playerId, System.currentTimeMillis());
+            }
+        }, delayTicks);
+
+        pendingAutoBackups.put(playerId, pending);
+    }
+
+    public String savePreRestoreSafetyBackup(Player target,
+                                             String triggeredByName,
+                                             String triggeredByUuid,
+                                             String reason) {
+        if (target == null) {
+            return null;
+        }
+        if (!plugin.getConfig().getBoolean("backup-strategy.pre-restore.enabled", true)) {
+            return "";
+        }
+
+        String label = plugin.getConfig()
+                .getString("backup-strategy.pre-restore.label",
+                        "Pre-restore safety backup");
+        if (reason != null && !reason.isBlank()) {
+            label = label + " [" + reason + "]";
+        }
+
+        return saveBackup(target, triggeredByName, triggeredByUuid,
+                "pre-restore", label);
+    }
+
+    public boolean isPreRestoreRequireSuccess() {
+        return plugin.getConfig().getBoolean("backup-strategy.pre-restore.require-success", false);
+    }
+
+    public boolean isPreRestoreNotifySuccess() {
+        return plugin.getConfig().getBoolean("backup-strategy.pre-restore.notify-success", false);
+    }
+
+    private boolean shouldCoalesceTrigger(String triggerType) {
+        if (!plugin.getConfig().getBoolean("backup-strategy.coalesce.enabled", true)) {
+            return false;
+        }
+        List<String> applied = plugin.getConfig()
+                .getStringList("backup-strategy.coalesce.apply-triggers");
+        if (applied == null || applied.isEmpty()) {
+            return false;
+        }
+        for (String t : applied) {
+            if (t != null && triggerType.equalsIgnoreCase(t.trim())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private long getCoalesceWindowMillis() {
+        int seconds = plugin.getConfig()
+                .getInt("backup-strategy.coalesce.window-seconds", 45);
+        return Math.max(0L, seconds) * 1000L;
+    }
+
+    public void shutdown() {
+        for (PendingAutoBackup pending : pendingAutoBackups.values()) {
+            Bukkit.getScheduler().cancelTask(pending.taskId);
+        }
+        pendingAutoBackups.clear();
+        lastAutoBackupMillis.clear();
+        integritySaveCounter.clear();
+    }
+
     public String saveBackup(Player target, String triggeredByName,
                              String triggeredByUuid, String triggerType, String label) {
         String uuid = target.getUniqueId().toString();
@@ -273,6 +411,8 @@ public class BackupManager {
 
         // Cleanup old snapshots
         cleanupOldBackups(uuid, history, historyFile);
+
+        maybeRunIntegrityCheck(uuid, history, historyFile);
 
         plugin.getLogger().info("Saved backup for " + target.getName()
                 + ": " + snapshotId);
@@ -655,36 +795,280 @@ public class BackupManager {
 
     private void cleanupOldBackups(String uuid, YamlConfiguration history,
                                    File historyFile) {
-        int maxSnapshots = plugin.getConfig().getInt("max-snapshots", 20);
-        if (maxSnapshots <= 0) return;
+        List<SnapshotMeta> all = collectSnapshots(history);
+        if (all.isEmpty()) {
+            return;
+        }
 
-        ConfigurationSection snapshots =
-                history.getConfigurationSection("snapshots");
-        if (snapshots == null) return;
-
-        List<String> keys = new ArrayList<>(snapshots.getKeys(false));
-        if (keys.size() <= maxSnapshots) return;
-
-        keys.sort(Comparator.naturalOrder());
-        int toDelete = keys.size() - maxSnapshots;
         boolean changed = false;
 
+        if (plugin.getConfig().getBoolean("backup-strategy.retention.enabled", true)) {
+            changed = applyTieredRetention(history, all) || changed;
+            all = collectSnapshots(history);
+        }
+
+        int maxSnapshots = plugin.getConfig().getInt("max-snapshots", 20);
+        boolean enforceMax = plugin.getConfig()
+                .getBoolean("backup-strategy.retention.enforce-max-snapshots", true);
+        if (!enforceMax || maxSnapshots <= 0 || all.size() <= maxSnapshots) {
+            if (changed) {
+                saveHistoryQuietly(uuid, history, historyFile);
+            }
+            return;
+        }
+
+        all.sort(Comparator.comparingLong(a -> a.timestamp));
+        int toDelete = all.size() - maxSnapshots;
+        boolean changedByMax = false;
+
         for (int i = 0; i < toDelete; i++) {
-            String key = keys.get(i);
-            history.set("snapshots." + key, null);
-            history.set("restored." + key, null);
+            SnapshotMeta snap = all.get(i);
+            history.set("snapshots." + snap.snapshotId, null);
+            history.set("restored." + snap.snapshotId, null);
+            changedByMax = true;
+            plugin.getLogger().info("Cleaned up old backup: " + snap.snapshotId);
+        }
+
+        if (changedByMax || changed) {
+            saveHistoryQuietly(uuid, history, historyFile);
+        }
+    }
+
+    private List<SnapshotMeta> collectSnapshots(YamlConfiguration history) {
+        ConfigurationSection snapshots = history.getConfigurationSection("snapshots");
+        if (snapshots == null) {
+            return Collections.emptyList();
+        }
+
+        List<SnapshotMeta> all = new ArrayList<>();
+        for (String id : snapshots.getKeys(false)) {
+            long timestamp = history.getLong("snapshots." + id + ".meta.timestamp", 0L);
+            if (timestamp <= 0) {
+                timestamp = parseSnapshotIdTimestamp(id);
+            }
+            all.add(new SnapshotMeta(id, timestamp));
+        }
+        return all;
+    }
+
+    private boolean applyTieredRetention(YamlConfiguration history, List<SnapshotMeta> snapshots) {
+        List<RetentionTier> tiers = loadRetentionTiers();
+        if (tiers.isEmpty()) {
+            return false;
+        }
+
+        snapshots.sort((a, b) -> Long.compare(b.timestamp, a.timestamp));
+        long now = System.currentTimeMillis();
+        Map<Integer, Long> lastKeptByTier = new HashMap<>();
+        boolean changed = false;
+
+        for (SnapshotMeta snap : snapshots) {
+            long ageMs = Math.max(0L, now - snap.timestamp);
+            int tierIndex = resolveTierIndex(ageMs, tiers);
+            RetentionTier tier = tiers.get(tierIndex);
+
+            Long lastKept = lastKeptByTier.get(tierIndex);
+            boolean keep = lastKept == null || (lastKept - snap.timestamp) >= tier.minGapMs;
+            if (keep) {
+                lastKeptByTier.put(tierIndex, snap.timestamp);
+                continue;
+            }
+
+            history.set("snapshots." + snap.snapshotId, null);
+            history.set("restored." + snap.snapshotId, null);
             changed = true;
-            plugin.getLogger().info("Cleaned up old backup: " + key);
+            plugin.getLogger().info("Tiered retention removed backup: " + snap.snapshotId);
+        }
+
+        return changed;
+    }
+
+    private List<RetentionTier> loadRetentionTiers() {
+        ConfigurationSection tiersSec = plugin.getConfig()
+                .getConfigurationSection("backup-strategy.retention.tiers");
+        if (tiersSec == null) {
+            return Collections.emptyList();
+        }
+
+        List<RetentionTier> tiers = new ArrayList<>();
+        for (String key : tiersSec.getKeys(false)) {
+            ConfigurationSection sec = tiersSec.getConfigurationSection(key);
+            if (sec == null) {
+                continue;
+            }
+
+            long maxAgeMs = readDurationMs(sec,
+                    "max-age-millis",
+                    "max-age-seconds",
+                    "max-age-minutes",
+                    "max-age-hours",
+                    "max-age-days");
+            if (maxAgeMs <= 0L) {
+                maxAgeMs = Long.MAX_VALUE;
+            }
+
+            long minGapMs = readDurationMs(sec,
+                    "min-gap-millis",
+                    "min-gap-seconds",
+                    "min-gap-minutes",
+                    "min-gap-hours",
+                    "min-gap-days");
+            if (minGapMs < 0L) {
+                minGapMs = 0L;
+            }
+
+            tiers.add(new RetentionTier(key, maxAgeMs, minGapMs));
+        }
+
+        tiers.sort(Comparator.comparingLong(t -> t.maxAgeMs));
+        return tiers;
+    }
+
+    private int resolveTierIndex(long ageMs, List<RetentionTier> tiers) {
+        for (int i = 0; i < tiers.size(); i++) {
+            if (ageMs <= tiers.get(i).maxAgeMs) {
+                return i;
+            }
+        }
+        return tiers.size() - 1;
+    }
+
+    private long readDurationMs(ConfigurationSection sec, String... keys) {
+        for (String key : keys) {
+            if (!sec.contains(key)) {
+                continue;
+            }
+            long v = sec.getLong(key, 0L);
+            if (v <= 0L) {
+                continue;
+            }
+            if (key.endsWith("-millis")) return v;
+            if (key.endsWith("-seconds")) return v * 1000L;
+            if (key.endsWith("-minutes")) return v * 60_000L;
+            if (key.endsWith("-hours")) return v * 3_600_000L;
+            if (key.endsWith("-days")) return v * 86_400_000L;
+        }
+        return 0L;
+    }
+
+    private void saveHistoryQuietly(String uuid, YamlConfiguration history, File historyFile) {
+        try {
+            history.save(historyFile);
+        } catch (IOException e) {
+            plugin.getLogger().log(Level.WARNING,
+                    "Failed to save after cleanup for " + uuid, e);
+        }
+    }
+
+    private long parseSnapshotIdTimestamp(String snapshotId) {
+        if (snapshotId == null || snapshotId.length() < 19) {
+            return 0L;
+        }
+        String base = snapshotId.substring(0, 19);
+        try {
+            LocalDateTime local = LocalDateTime.parse(base, SNAPSHOT_ID_TIME_FORMAT);
+            return local.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
+        } catch (DateTimeParseException ignored) {
+            return 0L;
+        }
+    }
+
+    // ========== Integrity check ==========
+
+    private void maybeRunIntegrityCheck(String uuid, YamlConfiguration history, File historyFile) {
+        if (!plugin.getConfig().getBoolean("backup-strategy.integrity-check.enabled", true)) {
+            return;
+        }
+
+        int every = Math.max(1, plugin.getConfig()
+                .getInt("backup-strategy.integrity-check.every-n-saves", 10));
+        int count = integritySaveCounter.getOrDefault(uuid, 0) + 1;
+        integritySaveCounter.put(uuid, count);
+        if (count < every) {
+            return;
+        }
+        integritySaveCounter.put(uuid, 0);
+
+        boolean removeCorrupt = plugin.getConfig()
+                .getBoolean("backup-strategy.integrity-check.remove-corrupt", false);
+        ConfigurationSection snapshots = history.getConfigurationSection("snapshots");
+        if (snapshots == null) {
+            return;
+        }
+
+        boolean changed = false;
+        int corruptCount = 0;
+        for (String snapshotId : new ArrayList<>(snapshots.getKeys(false))) {
+            ConfigurationSection sec = snapshots.getConfigurationSection(snapshotId);
+            String error = validateSnapshot(sec);
+            if (error == null) {
+                history.set("snapshots." + snapshotId + ".meta.integrity-status", "ok");
+                history.set("snapshots." + snapshotId + ".meta.integrity-error", null);
+                history.set("snapshots." + snapshotId + ".meta.integrity-checked-at",
+                        System.currentTimeMillis());
+                continue;
+            }
+
+            corruptCount++;
+            plugin.getLogger().warning("Integrity check found corrupted snapshot "
+                    + snapshotId + " for " + uuid + ": " + error);
+
+            if (removeCorrupt) {
+                history.set("snapshots." + snapshotId, null);
+                history.set("restored." + snapshotId, null);
+            } else {
+                history.set("snapshots." + snapshotId + ".meta.integrity-status", "corrupt");
+                history.set("snapshots." + snapshotId + ".meta.integrity-error", error);
+                history.set("snapshots." + snapshotId + ".meta.integrity-checked-at",
+                        System.currentTimeMillis());
+            }
+            changed = true;
         }
 
         if (changed) {
-            try {
-                history.save(historyFile);
-            } catch (IOException e) {
-                plugin.getLogger().log(Level.WARNING,
-                        "Failed to save after cleanup for " + uuid, e);
-            }
+            saveHistoryQuietly(uuid, history, historyFile);
         }
+
+        if (corruptCount > 0) {
+            plugin.getLogger().warning("Integrity check completed for " + uuid
+                    + ": corrupted snapshots=" + corruptCount
+                    + (removeCorrupt ? " (removed)." : " (marked)."));
+        }
+    }
+
+    private String validateSnapshot(ConfigurationSection snapshot) {
+        if (snapshot == null) {
+            return "missing snapshot section";
+        }
+        if (!snapshot.isConfigurationSection("meta")) {
+            return "missing meta section";
+        }
+
+        String content = snapshot.getString("inventory.content", null);
+        if (content == null || content.isBlank()) {
+            return "missing inventory.content";
+        }
+
+        try {
+            SerializationUtil.itemStackArrayFromBase64(content);
+
+            if (snapshot.contains("inventory.armor")) {
+                SerializationUtil.itemStackArrayFromBase64(
+                        snapshot.getString("inventory.armor", ""));
+            }
+            if (snapshot.contains("inventory.offhand")) {
+                SerializationUtil.itemStackArrayFromBase64(
+                        snapshot.getString("inventory.offhand", ""));
+            }
+            if (snapshot.contains("inventory.enderchest")) {
+                SerializationUtil.itemStackArrayFromBase64(
+                        snapshot.getString("inventory.enderchest", ""));
+            }
+        } catch (Exception ex) {
+            return "invalid serialized inventory data: " + ex.getClass().getSimpleName();
+        }
+
+        return null;
     }
 
     // ========== Import helpers ==========
@@ -1690,6 +2074,35 @@ public class BackupManager {
     }
 
     // ========== Data classes ==========
+
+    private static class PendingAutoBackup {
+        int taskId;
+        long dueAt;
+        String triggerType;
+        String label;
+    }
+
+    private static class SnapshotMeta {
+        final String snapshotId;
+        final long timestamp;
+
+        SnapshotMeta(String snapshotId, long timestamp) {
+            this.snapshotId = snapshotId;
+            this.timestamp = timestamp;
+        }
+    }
+
+    private static class RetentionTier {
+        final String key;
+        final long maxAgeMs;
+        final long minGapMs;
+
+        RetentionTier(String key, long maxAgeMs, long minGapMs) {
+            this.key = key;
+            this.maxAgeMs = maxAgeMs;
+            this.minGapMs = minGapMs;
+        }
+    }
 
     public static class BackupInfo {
         public String snapshotId;

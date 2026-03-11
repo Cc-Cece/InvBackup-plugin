@@ -329,6 +329,9 @@ public class RestoreGui implements Listener {
                         .getGuiMessage("gui.restore.custom-toggle.locked"));
                 return;
             }
+            if (!ensurePreRestoreBackup(player, session)) {
+                return;
+            }
             handleItemClaim(player, session, tracker, slot, isAdmin);
             return;
         }
@@ -338,6 +341,9 @@ public class RestoreGui implements Listener {
             if (!canRestorePart(session, PART_ARMOR)) {
                 player.sendMessage(plugin.getLanguageManager()
                         .getGuiMessage("gui.restore.custom-toggle.locked"));
+                return;
+            }
+            if (!ensurePreRestoreBackup(player, session)) {
                 return;
             }
             handleArmorClaim(player, session, tracker, slot, isAdmin);
@@ -351,6 +357,9 @@ public class RestoreGui implements Listener {
                         .getGuiMessage("gui.restore.custom-toggle.locked"));
                 return;
             }
+            if (!ensurePreRestoreBackup(player, session)) {
+                return;
+            }
             handleOffhandClaim(player, session, tracker, isAdmin);
             return;
         }
@@ -361,10 +370,16 @@ public class RestoreGui implements Listener {
                 player.sendMessage(plugin.getLanguageManager().getGuiMessage("gui.restore.custom-toggle.locked"));
                 return;
             }
+            if (!ensurePreRestoreBackup(player, session)) {
+                return;
+            }
             handleStatusRestore(player, session, tracker, "health", isAdmin);
         } else if (slot == SLOT_FOOD) {
             if (!canRestorePart(session, PART_HEALTH_FOOD)) {
                 player.sendMessage(plugin.getLanguageManager().getGuiMessage("gui.restore.custom-toggle.locked"));
+                return;
+            }
+            if (!ensurePreRestoreBackup(player, session)) {
                 return;
             }
             handleStatusRestore(player, session, tracker, "food", isAdmin);
@@ -373,16 +388,25 @@ public class RestoreGui implements Listener {
                 player.sendMessage(plugin.getLanguageManager().getGuiMessage("gui.restore.custom-toggle.locked"));
                 return;
             }
+            if (!ensurePreRestoreBackup(player, session)) {
+                return;
+            }
             handleStatusRestore(player, session, tracker, "exp", isAdmin);
         } else if (slot == SLOT_LOCATION) {
             if (!canRestorePart(session, PART_LOCATION)) {
                 player.sendMessage(plugin.getLanguageManager().getGuiMessage("gui.restore.custom-toggle.locked"));
                 return;
             }
+            if (!ensurePreRestoreBackup(player, session)) {
+                return;
+            }
             handleStatusRestore(player, session, tracker, "location", isAdmin);
         } else if (slot == SLOT_EFFECTS) {
             if (!canRestorePart(session, PART_EFFECTS)) {
                 player.sendMessage(plugin.getLanguageManager().getGuiMessage("gui.restore.custom-toggle.locked"));
+                return;
+            }
+            if (!ensurePreRestoreBackup(player, session)) {
                 return;
             }
             handleStatusRestore(player, session, tracker, "effects", isAdmin);
@@ -398,6 +422,9 @@ public class RestoreGui implements Listener {
                     player, session.targetUuid, session.snapshotId,
                     () -> openRestoreGui(player, session.targetUuid, session.snapshotId, session.requestId));
         } else if (slot == SLOT_RESTORE_ALL) {
+            if (!ensurePreRestoreBackup(player, session)) {
+                return;
+            }
             handleRestoreAll(player, session, tracker, isAdmin);
         } else if (slot == SLOT_NAME_INPUT && isAdmin &&
                 plugin.getConfig().getBoolean("restore-request.manual-name-input.enabled", false)) {
@@ -572,11 +599,6 @@ public class RestoreGui implements Listener {
 
     private void handleRestoreAll(Player player, RestoreSession session,
                                   RestoredTracker tracker, boolean isAdmin) {
-        // First, auto-backup current inventory
-        plugin.getBackupManager().saveBackup(
-                player, "InvBackup", "CONSOLE", "auto",
-                "Pre-restore backup");
-
         YamlConfiguration config = session.config;
         if (config == null) {
             player.sendMessage(plugin.getMessage("backup-not-found"));
@@ -1040,6 +1062,32 @@ public class RestoreGui implements Listener {
         return normalized;
     }
 
+    private boolean ensurePreRestoreBackup(Player player, RestoreSession session) {
+        if (session.preRestoreChecked) {
+            return session.preRestoreReady;
+        }
+        session.preRestoreChecked = true;
+
+        String backupId = plugin.getBackupManager().savePreRestoreSafetyBackup(
+                player, player.getName(), player.getUniqueId().toString(), "restore-gui");
+
+        if (backupId == null) {
+            boolean requireSuccess = plugin.getBackupManager().isPreRestoreRequireSuccess();
+            session.preRestoreReady = !requireSuccess;
+            if (requireSuccess) {
+                player.sendMessage(plugin.getMessage("pre-restore-backup-failed"));
+            }
+            return session.preRestoreReady;
+        }
+
+        session.preRestoreReady = true;
+        if (!backupId.isEmpty() && plugin.getBackupManager().isPreRestoreNotifySuccess()) {
+            player.sendMessage(plugin.getMessage("pre-restore-backup-created")
+                    .replaceText(b -> b.matchLiteral("{id}").replacement(backupId)));
+        }
+        return true;
+    }
+
     private ItemStack createItem(Material material, Component name,
                                  Component... lore) {
         ItemStack item = new ItemStack(material);
@@ -1062,6 +1110,8 @@ public class RestoreGui implements Listener {
         List<String> allowedParts = new ArrayList<>();
         ItemStack offhandItem;
         YamlConfiguration config;
+        boolean preRestoreChecked;
+        boolean preRestoreReady = true;
         final Inventory inventory;
 
         RestoreSession(String targetUuid, String snapshotId, Inventory inventory,
