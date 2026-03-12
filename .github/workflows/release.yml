@@ -1,16 +1,21 @@
-name: Dev Build and Release
+name: Build and Release
 
 on:
   push:
-    branches:
-      - main
+    tags:
+      - 'v*'
   workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release tag (example: v1.0.3)'
+        required: true
+        type: string
 
 permissions:
   contents: write
 
 jobs:
-  build-and-release-dev:
+  build-and-release:
     runs-on: ubuntu-latest
 
     steps:
@@ -38,19 +43,30 @@ jobs:
           ./gradlew clean build -PbuildTarget=paper-1.21-plus -x test
           cp build/libs/*.jar dist/InvBackup-paper-1.21-plus.jar
 
+      - name: Resolve release metadata
+        id: meta
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag_name }}"
+          else
+            TAG="${{ github.ref_name }}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "name=Release $TAG" >> "$GITHUB_OUTPUT"
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: invbackup-dev
+          name: invbackup-release-${{ steps.meta.outputs.tag }}
           path: dist/*.jar
 
-      - name: Create or update dev release
+      - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: dev
-          name: Dev build
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.name }}
           draft: false
-          prerelease: true
+          prerelease: false
           files: |
             dist/*.jar
         env:

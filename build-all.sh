@@ -1,65 +1,38 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DIST_DIR="${ROOT_DIR}/dist"
+
+build_profile() {
+  local profile="$1"
+  local output="$2"
+
+  echo
+  echo "Building profile: ${profile}"
+  "${ROOT_DIR}/gradlew" clean build "-PbuildTarget=${profile}" -x test
+
+  local jar
+  jar="$(find "${ROOT_DIR}/build/libs" -maxdepth 1 -type f -name '*.jar' | head -n 1)"
+  if [[ -z "${jar}" ]]; then
+    echo "No jar produced for profile: ${profile}" >&2
+    exit 1
+  fi
+
+  cp "${jar}" "${DIST_DIR}/${output}"
+  echo "Created: ${DIST_DIR}/${output}"
+}
 
 echo "========================================"
-echo "InvBackup 多版本构建脚本"
+echo "InvBackup dual-profile build"
 echo "========================================"
-echo
 
-echo "正在清理构建目录..."
-rm -rf build
+rm -rf "${DIST_DIR}"
+mkdir -p "${DIST_DIR}"
 
-echo
-echo "构建 1.21.x 版本..."
-./gradlew clean build -PmcVersion=1.21
-if [ $? -ne 0 ]; then
-    echo "1.21.x 构建失败！"
-    exit 1
-fi
-if [ -f "build/libs/InvBackup-1.0.2.jar" ]; then
-    cp build/libs/InvBackup-1.0.2.jar build/libs/InvBackup-1.21.jar
-    echo "已生成: build/libs/InvBackup-1.21.jar"
-fi
+build_profile "paper-1.18-1.20" "InvBackup-paper-1.18-1.20.jar"
+build_profile "paper-1.21-plus" "InvBackup-paper-1.21-plus.jar"
 
 echo
-echo "构建 1.20.x 版本..."
-./gradlew clean build -PmcVersion=1.20
-if [ $? -ne 0 ]; then
-    echo "1.20.x 构建失败！"
-    exit 1
-fi
-if [ -f "build/libs/InvBackup-1.0.2.jar" ]; then
-    cp build/libs/InvBackup-1.0.2.jar build/libs/InvBackup-1.20.jar
-    echo "已生成: build/libs/InvBackup-1.20.jar"
-fi
-
-echo
-echo "构建 1.19.x 版本..."
-./gradlew clean build -PmcVersion=1.19
-if [ $? -ne 0 ]; then
-    echo "1.19.x 构建失败！"
-    exit 1
-fi
-if [ -f "build/libs/InvBackup-1.0.2.jar" ]; then
-    cp build/libs/InvBackup-1.0.2.jar build/libs/InvBackup-1.19.jar
-    echo "已生成: build/libs/InvBackup-1.19.jar"
-fi
-
-echo
-echo "构建 1.18.x 版本..."
-./gradlew clean build -PmcVersion=1.18
-if [ $? -ne 0 ]; then
-    echo "1.18.x 构建失败！"
-    exit 1
-fi
-if [ -f "build/libs/InvBackup-1.0.2.jar" ]; then
-    cp build/libs/InvBackup-1.0.2.jar build/libs/InvBackup-1.18.jar
-    echo "已生成: build/libs/InvBackup-1.18.jar"
-fi
-
-echo
-echo "========================================"
-echo "构建完成！"
-echo "========================================"
-echo
-echo "生成的版本："
-ls -la build/libs/InvBackup-*.jar
+echo "Done. Artifacts:"
+ls -1 "${DIST_DIR}"/*.jar

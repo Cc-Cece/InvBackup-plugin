@@ -113,6 +113,11 @@ public class InvBackupTabCompleter implements TabCompleter {
                         completions.addAll(getOnlinePlayerNames());
                     }
                 }
+                case "web" -> {
+                    if (sender.hasPermission("invbackup.admin")) {
+                        completions.add("token");
+                    }
+                }
             }
             return filter(completions, args[1]);
         }

@@ -94,7 +94,7 @@ public class InvBackupCommand implements CommandExecutor {
                 handleGui(sender);
                 break;
             case "web":
-                handleWeb(sender);
+                handleWeb(sender, args);
                 break;
             case "reload":
                 handleReload(sender);
@@ -901,7 +901,7 @@ public class InvBackupCommand implements CommandExecutor {
 
     // ========== web ==========
 
-    private void handleWeb(CommandSender sender) {
+    private void handleWeb(CommandSender sender, String[] args) {
         if (!sender.hasPermission("invbackup.admin")) {
             sender.sendMessage(plugin.getMessage("no-permission"));
             return;
@@ -914,23 +914,60 @@ public class InvBackupCommand implements CommandExecutor {
             return;
         }
 
-        String host = plugin.getConfig().getString("web.host", "127.0.0.1");
-        int port = plugin.getConfig().getInt("web.port", 5800);
-        String baseUrl = "http://" + host + ":" + port + "/";
+        boolean revealToken = args.length >= 2 && "token".equalsIgnoreCase(args[1]);
+        com.invbackup.web.EmbeddedWebServer webServer = plugin.getEmbeddedWebServer();
+        boolean running = webServer != null && webServer.isRunning();
+
+        String baseUrl;
+        if (running) {
+            baseUrl = webServer.getBaseUrl();
+        } else {
+            String host = plugin.getConfig().getString("web.host", "127.0.0.1");
+            int port = plugin.getConfig().getInt("web.port", 5800);
+            baseUrl = "http://" + host + ":" + port + "/";
+        }
+
         sender.sendMessage(Component.text("InvBackup Web UI: ",
                         NamedTextColor.GREEN)
                 .append(Component.text(baseUrl, NamedTextColor.AQUA)));
 
-        boolean authEnabled = plugin.getConfig().getBoolean("web.auth.enabled", true);
+        boolean authEnabled = running
+                ? webServer.isAuthEnabled()
+                : plugin.getConfig().getBoolean("web.auth.enabled", true);
         if (authEnabled) {
-            String token = plugin.getConfig().getString("web.auth.token", "");
             sender.sendMessage(Component.text(
-                    "Auth header: X-InvBackup-Token: " + token,
+                    "Auth header: X-InvBackup-Token",
                     NamedTextColor.YELLOW));
-            if (!token.isBlank()) {
+
+            if (revealToken) {
+                String token = running
+                        ? webServer.getAuthToken()
+                        : plugin.getConfig().getString("web.auth.token", "");
+                if (token == null || token.isBlank()) {
+                    sender.sendMessage(Component.text(
+                            "Auth token is empty. Set web.auth.token in config.yml and run /ib reload.",
+                            NamedTextColor.RED));
+                } else {
+                    sender.sendMessage(Component.text(
+                            "Auth token: " + token,
+                            NamedTextColor.GOLD));
+                    sender.sendMessage(Component.text(
+                            "Quick URL: " + baseUrl + "?token=" + token,
+                            NamedTextColor.GRAY));
+                }
+            } else {
                 sender.sendMessage(Component.text(
-                        "Quick URL: " + baseUrl + "?token=" + token,
+                        "Token is hidden. Use /ib web token to print it.",
                         NamedTextColor.GRAY));
+            }
+
+            if (running && webServer.isUsingGeneratedAuthToken()) {
+                sender.sendMessage(Component.text(
+                        "Current token is runtime-generated because web.auth.token is empty.",
+                        NamedTextColor.RED));
+                sender.sendMessage(Component.text(
+                        "Set web.auth.token in config.yml and run /ib reload to make it persistent.",
+                        NamedTextColor.RED));
             }
         } else {
             sender.sendMessage(Component.text(
@@ -1002,7 +1039,7 @@ public class InvBackupCommand implements CommandExecutor {
                     "Migrate UUID"));
             sender.sendMessage(helpLine("/ib search <name>",
                     "Search by player name"));
-            sender.sendMessage(helpLine("/ib web",
+            sender.sendMessage(helpLine("/ib web [token]",
                     "Show embedded web UI URL"));
             sender.sendMessage(helpLine("/ib reload", "Reload config"));
         }

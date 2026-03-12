@@ -33,7 +33,25 @@ InvBackup is a **player inventory and state backup & restore plugin** for Paper 
 
 ### Requirements
 
-- Java 21+
-- Paper 1.21.x (plugin `api-version: "1.21"`, built against `paper-api:1.21.4-R0.1-SNAPSHOT`)
+- Java 17+ (for `paper-1.18-1.20` build) / Java 21+ (for `paper-1.21-plus` build)
+- Paper/Spigot 1.18.x - 1.21.x
+
+### Build profiles
+
+- `paper-1.18-1.20`: one jar for Paper/Spigot 1.18.x - 1.20.x (`api-version: 1.18`)
+- `paper-1.21-plus`: one jar for Paper/Spigot 1.21.x+ (`api-version: 1.21`)
+
+```bash
+# Build Paper 1.18 - 1.20 profile
+./gradlew clean build -PbuildTarget=paper-1.18-1.20
+
+# Build 1.21+ profile
+./gradlew clean build -PbuildTarget=paper-1.21-plus
+
+# Build both jars into dist/
+build-all.bat        # Windows
+./build-all.sh       # Linux/macOS
+powershell -ExecutionPolicy Bypass -File .\build-versions.ps1
+```
 
 For detailed explanation of features, configuration and commands, see `README.en.full.md` (English Full) or `README.full.md` (Chinese Full).

@@ -47,6 +47,7 @@ public class EmbeddedWebServer {
     private int port;
     private boolean authEnabled;
     private String authToken;
+    private boolean generatedAuthToken;
     private boolean allowQueryToken;
     private int defaultLimit;
     private int maxLimit;
@@ -88,9 +89,6 @@ public class EmbeddedWebServer {
             if (authEnabled) {
                 plugin.getLogger().info("InvBackup web auth enabled. Header: "
                         + AUTH_HEADER + " (or Authorization: Bearer <token>)");
-                if (authToken != null && !authToken.isBlank()) {
-                    plugin.getLogger().info("InvBackup web token: " + authToken);
-                }
             }
             return true;
         } catch (IOException e) {
@@ -119,6 +117,18 @@ public class EmbeddedWebServer {
         return "http://" + host + ":" + port + "/";
     }
 
+    public boolean isAuthEnabled() {
+        return authEnabled;
+    }
+
+    public String getAuthToken() {
+        return authToken == null ? "" : authToken;
+    }
+
+    public boolean isUsingGeneratedAuthToken() {
+        return generatedAuthToken;
+    }
+
     public String getHost() {
         return host;
     }
@@ -139,10 +149,13 @@ public class EmbeddedWebServer {
 
         authEnabled = plugin.getConfig().getBoolean("web.auth.enabled", true);
         authToken = plugin.getConfig().getString("web.auth.token", "");
+        generatedAuthToken = false;
         if (authEnabled && (authToken == null || authToken.isBlank())) {
             authToken = UUID.randomUUID().toString().replace("-", "");
-            plugin.getLogger().warning("web.auth.token is empty. Using generated runtime token: "
-                    + authToken);
+            generatedAuthToken = true;
+            plugin.getLogger().warning(
+                    "web.auth.token is empty. Generated a runtime token. "
+                            + "Set web.auth.token in config.yml and run /ib reload.");
         }
         allowQueryToken = plugin.getConfig().getBoolean("web.auth.allow-query-token", true);
 

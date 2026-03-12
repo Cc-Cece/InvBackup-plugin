@@ -475,7 +475,6 @@ public class BackupManager {
                 } catch (NoSuchFieldException e2) {
                     // 如果都不存在，跳过最大生命值记录
                     plugin.getLogger().warning("无法找到最大生命值属性常量，跳过记录");
-                    return;
                 }
             }
             
