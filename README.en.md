@@ -1,6 +1,6 @@
 ## InvBackup
 
-InvBackup is a **player inventory and state backup & restore plugin** for Paper / Spigot servers (Paper 1.21.x recommended).
+InvBackup is a **player inventory and state backup & restore plugin** for Paper / Spigot servers, with two release targets covering 1.18.x - 1.21.x+.
 
 ### Key features
 
