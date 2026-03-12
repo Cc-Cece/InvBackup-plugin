@@ -45,25 +45,63 @@ public class InvBackupCommand implements CommandExecutor {
         String sub = args[0].toLowerCase();
 
         switch (sub) {
-            case "save" -> handleSave(sender, args);
-            case "list" -> handleList(sender, args);
-            case "preview" -> handlePreview(sender, args);
-            case "restore" -> handleRestore(sender, args);
-            case "forcerestore" -> handleForceRestore(sender, args);
-            case "accept" -> handleAccept(sender, args);
-            case "decline" -> handleDecline(sender, args);
-            case "revoke" -> handleRevoke(sender, args);
-            case "delete" -> handleDelete(sender, args);
-            case "saveall" -> handleSaveAll(sender, args);
-            case "import" -> handleImport(sender, args);
-            case "export" -> handleExport(sender, args);
-            case "exportjson" -> handleExportJson(sender, args);
-            case "migrate" -> handleMigrate(sender, args);
-            case "search" -> handleSearch(sender, args);
-            case "gui" -> handleGui(sender);
-            case "web" -> handleWeb(sender);
-            case "reload" -> handleReload(sender);
-            default -> sendHelp(sender);
+            case "save":
+                handleSave(sender, args);
+                break;
+            case "list":
+                handleList(sender, args);
+                break;
+            case "preview":
+                handlePreview(sender, args);
+                break;
+            case "restore":
+                handleRestore(sender, args);
+                break;
+            case "forcerestore":
+                handleForceRestore(sender, args);
+                break;
+            case "accept":
+                handleAccept(sender, args);
+                break;
+            case "decline":
+                handleDecline(sender, args);
+                break;
+            case "revoke":
+                handleRevoke(sender, args);
+                break;
+            case "delete":
+                handleDelete(sender, args);
+                break;
+            case "saveall":
+                handleSaveAll(sender, args);
+                break;
+            case "import":
+                handleImport(sender, args);
+                break;
+            case "export":
+                handleExport(sender, args);
+                break;
+            case "exportjson":
+                handleExportJson(sender, args);
+                break;
+            case "migrate":
+                handleMigrate(sender, args);
+                break;
+            case "search":
+                handleSearch(sender, args);
+                break;
+            case "gui":
+                handleGui(sender);
+                break;
+            case "web":
+                handleWeb(sender);
+                break;
+            case "reload":
+                handleReload(sender);
+                break;
+            default:
+                sendHelp(sender);
+                break;
         }
 
         return true;
@@ -349,7 +387,7 @@ public class InvBackupCommand implements CommandExecutor {
         }
 
         if (restoreLevel == null) {
-            var config = plugin.getBackupManager().loadBackupConfig(
+            org.bukkit.configuration.file.YamlConfiguration config = plugin.getBackupManager().loadBackupConfig(
                     target.getUniqueId().toString(), snapshotId);
             restoreLevel = config != null
                     ? config.getString("meta.backup-level", "minimal")

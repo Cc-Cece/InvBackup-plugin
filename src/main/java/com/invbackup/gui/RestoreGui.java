@@ -1,6 +1,7 @@
 package com.invbackup.gui;
 
 import com.invbackup.InvBackup;
+import com.invbackup.compat.CompatibilityHelper;
 import com.invbackup.manager.RestoredTracker;
 import com.invbackup.request.RestoreRequest;
 import com.invbackup.manager.SerializationUtil;
@@ -578,8 +579,7 @@ public class RestoreGui implements Listener {
                 for (String effectStr : config.getStringList("status.effects")) {
                     String[] parts = effectStr.split(":");
                     if (parts.length == 3) {
-                        PotionEffectType type = org.bukkit.Registry.EFFECT.get(
-                                NamespacedKey.minecraft(parts[0]));
+                        PotionEffectType type = CompatibilityHelper.getPotionEffect(parts[0]);
                         if (type != null) {
                             player.addPotionEffect(new PotionEffect(type,
                                     Integer.parseInt(parts[1]),
@@ -816,8 +816,7 @@ public class RestoreGui implements Listener {
             for (String effectStr : config.getStringList("status.effects")) {
                 String[] parts = effectStr.split(":");
                 if (parts.length == 3) {
-                    PotionEffectType type = org.bukkit.Registry.EFFECT.get(
-                            NamespacedKey.minecraft(parts[0]));
+                    PotionEffectType type = CompatibilityHelper.getPotionEffect(parts[0]);
                     if (type != null) {
                         player.addPotionEffect(new PotionEffect(type,
                                 Integer.parseInt(parts[1]),

@@ -6,9 +6,28 @@ plugins {
 group = "com.invbackup"
 version = "1.0.2"
 
+// 支持多版本构建，默认使用1.21
+def targetVersion = project.hasProperty('mcVersion') ? project.mcVersion : '1.21'
+
 java {
-    sourceCompatibility = JavaVersion.VERSION_21
-    targetCompatibility = JavaVersion.VERSION_21
+    // 根据目标版本设置Java版本
+    if (targetVersion == '1.21') {
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
+    } else if (targetVersion == '1.20') {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    } else if (targetVersion == '1.19') {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    } else if (targetVersion == '1.18') {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    } else {
+        // 默认使用Java 17（1.18+）
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
 }
 
 repositories {
@@ -20,13 +39,31 @@ repositories {
 }
 
 dependencies {
-    compileOnly 'io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT'
+    // 根据目标版本选择Paper API
+    if (targetVersion == '1.21') {
+        compileOnly 'io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT'
+    } else if (targetVersion == '1.20') {
+        compileOnly 'io.papermc.paper:paper-api:1.20.4-R0.1-SNAPSHOT'
+    } else if (targetVersion == '1.19') {
+        compileOnly 'io.papermc.paper:paper-api:1.19.4-R0.1-SNAPSHOT'
+    } else if (targetVersion == '1.18') {
+        compileOnly 'io.papermc.paper:paper-api:1.18.2-R0.1-SNAPSHOT'
+    } else {
+        // 默认使用1.21
+        compileOnly 'io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT'
+    }
+    
     implementation 'io.papermc:paperlib:1.0.8'
 }
 
 processResources {
     filesMatching("**/plugin.yml") {
-        expand(NAME: rootProject.name, VERSION: version, PACKAGE: rootProject.group.toString())
+        expand(
+            NAME: rootProject.name, 
+            VERSION: version, 
+            PACKAGE: rootProject.group.toString(),
+            API_VERSION: targetVersion
+        )
     }
 }
 

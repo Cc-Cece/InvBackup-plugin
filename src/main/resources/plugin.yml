@@ -1,7 +1,7 @@
 main: ${PACKAGE}.InvBackup
 name: ${NAME}
 version: "${VERSION}"
-api-version: "1.21"
+api-version: "${API_VERSION}"
 author: InvBackup
 description: Player inventory backup and restore plugin
 

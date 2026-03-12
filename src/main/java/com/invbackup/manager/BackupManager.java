@@ -1,6 +1,7 @@
 package com.invbackup.manager;
 
 import com.invbackup.InvBackup;
+import com.invbackup.compat.CompatibilityHelper;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.NamespacedKey;
@@ -10,7 +11,8 @@ import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.EquipmentSlot;
-import org.bukkit.inventory.EquipmentSlotGroup;
+// EquipmentSlotGroup 是 1.21+ 的API，在1.18中不可用
+// import org.bukkit.inventory.EquipmentSlotGroup;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.Material;
@@ -459,9 +461,34 @@ public class BackupManager {
         config.set("status.total-experience", target.getTotalExperience());
         config.set("status.health", target.getHealth());
 
-        var maxHealthAttr = target.getAttribute(Attribute.MAX_HEALTH);
-        if (maxHealthAttr != null) {
-            config.set("status.max-health", maxHealthAttr.getValue());
+        // 获取最大生命值（兼容1.18-1.21）
+        try {
+            // 使用反射获取最大生命值，避免直接引用可能不存在的常量
+            java.lang.reflect.Field maxHealthField = null;
+            try {
+                // 尝试获取MAX_HEALTH常量（1.16+）
+                maxHealthField = Attribute.class.getField("MAX_HEALTH");
+            } catch (NoSuchFieldException e) {
+                // 如果MAX_HEALTH不存在，尝试其他可能的常量名
+                try {
+                    maxHealthField = Attribute.class.getField("GENERIC_MAX_HEALTH");
+                } catch (NoSuchFieldException e2) {
+                    // 如果都不存在，跳过最大生命值记录
+                    plugin.getLogger().warning("无法找到最大生命值属性常量，跳过记录");
+                    return;
+                }
+            }
+            
+            if (maxHealthField != null) {
+                Attribute maxHealthAttr = (Attribute) maxHealthField.get(null);
+                org.bukkit.attribute.AttributeInstance attributeInstance = target.getAttribute(maxHealthAttr);
+                if (attributeInstance != null) {
+                    config.set("status.max-health", attributeInstance.getValue());
+                }
+            }
+        } catch (Exception e) {
+            // 所有方法都失败，跳过最大生命值记录
+            plugin.getLogger().warning("无法获取玩家最大生命值: " + e.getMessage());
         }
 
         config.set("status.food", target.getFoodLevel());
@@ -557,8 +584,7 @@ public class BackupManager {
         for (String effectStr : config.getStringList("status.effects")) {
             String[] parts = effectStr.split(":");
             if (parts.length == 3) {
-                PotionEffectType type = org.bukkit.Registry.EFFECT.get(
-                        NamespacedKey.minecraft(parts[0]));
+                PotionEffectType type = CompatibilityHelper.getPotionEffect(parts[0]);
                 if (type != null) {
                     target.addPotionEffect(new PotionEffect(type,
                             Integer.parseInt(parts[1]),
@@ -1624,19 +1650,7 @@ public class BackupManager {
     }
 
     private String resolveModifierSlot(AttributeModifier modifier) {
-        try {
-            EquipmentSlotGroup group = modifier.getSlotGroup();
-            if (group != null) {
-                return group.toString();
-            }
-        } catch (Throwable ignored) {
-        }
-        try {
-            EquipmentSlot slot = modifier.getSlot();
-            return slot != null ? slot.name() : null;
-        } catch (Throwable ignored) {
-            return null;
-        }
+        return CompatibilityHelper.getModifierSlot(modifier);
     }
 
     /** Very small JSON writer for the limited structures we build here. */
