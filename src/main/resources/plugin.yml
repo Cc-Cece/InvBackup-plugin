@@ -1,14 +1,14 @@
 main: ${PACKAGE}.InvBackup
 name: ${NAME}
 version: "${VERSION}"
-api-version: "1.21"
+api-version: "${API_VERSION}"
 author: InvBackup
 description: Player inventory backup and restore plugin
 
 commands:
   invbackup:
     description: Inventory backup management
-    usage: "/invbackup <save|list|preview|restore|gui|import|export|migrate|search|reload>"
+    usage: "/invbackup <save|list|preview|restore|gui|import|export|migrate|search|web [token]|reload>"
     aliases: [ib]
 
 permissions:

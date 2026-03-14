@@ -13,6 +13,7 @@ import com.invbackup.manager.BackupManager;
 import com.invbackup.manager.LanguageManager;
 import com.invbackup.manager.PlayerIdentityManager;
 import com.invbackup.request.RestoreRequestManager;
+import com.invbackup.web.EmbeddedWebServer;
 import io.papermc.lib.PaperLib;
 import net.kyori.adventure.text.Component;
 import org.bukkit.Bukkit;
@@ -39,6 +40,7 @@ public class InvBackup extends JavaPlugin implements Listener {
     private BulkRestoreGui bulkRestoreGui;
     private CategoryGui categoryGui;
     private SearchGui searchGui;
+    private EmbeddedWebServer embeddedWebServer;
     private int autoSaveTaskId = -1;
 
     @Override
@@ -75,6 +77,7 @@ public class InvBackup extends JavaPlugin implements Listener {
         getServer().getPluginManager().registerEvents(searchGui, this);
 
         startAutoSaveTask();
+        restartEmbeddedWebServer();
 
         getLogger().info("InvBackup enabled!");
     }
@@ -89,6 +92,7 @@ public class InvBackup extends JavaPlugin implements Listener {
         }
 
         stopAutoSaveTask();
+        stopEmbeddedWebServer();
         backupManager.shutdown();
 
         getLogger().info("InvBackup disabled!");
@@ -190,6 +194,25 @@ public class InvBackup extends JavaPlugin implements Listener {
         startAutoSaveTask();
     }
 
+    public synchronized void restartEmbeddedWebServer() {
+        stopEmbeddedWebServer();
+        if (!getConfig().getBoolean("web.enabled", false)) {
+            return;
+        }
+
+        EmbeddedWebServer server = new EmbeddedWebServer(this);
+        if (server.start()) {
+            embeddedWebServer = server;
+        }
+    }
+
+    public synchronized void stopEmbeddedWebServer() {
+        if (embeddedWebServer != null) {
+            embeddedWebServer.stop();
+            embeddedWebServer = null;
+        }
+    }
+
     private int getIntervalSeconds() {
         if (getConfig().contains("backup-strategy.events.interval-seconds")) {
             return Math.max(0,
@@ -251,6 +274,10 @@ public class InvBackup extends JavaPlugin implements Listener {
 
     public SearchGui getSearchGui() {
         return searchGui;
+    }
+
+    public EmbeddedWebServer getEmbeddedWebServer() {
+        return embeddedWebServer;
     }
 
     public Component getMessage(String key) {

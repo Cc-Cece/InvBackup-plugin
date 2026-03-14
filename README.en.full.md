@@ -142,14 +142,26 @@ Most restore operations only create restore requests and let players claim items
 ## Installation & Requirements
 
 - **Requirements**
-  - Java 21+
+  - Java 17+ (for `paper-1.18-1.20`) / Java 21+ (for `paper-1.21-plus`)
   - Paper / Spigot:
-    - `plugin.yml` `api-version: "1.21"`;
-    - built against `io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT`;
-    - running on Paper 1.21.x is strongly recommended.
+    - `paper-1.18-1.20`: `plugin.yml` `api-version: "1.18"`, built against `paper-api:1.18.2-R0.1-SNAPSHOT`;
+    - `paper-1.21-plus`: `plugin.yml` `api-version: "1.21"`, built against `paper-api:1.21.4-R0.1-SNAPSHOT`.
+
+- **Build profiles**
+  - Build `paper-1.18-1.20`:
+    - `./gradlew clean build -PbuildTarget=paper-1.18-1.20`
+  - Build `paper-1.21-plus`:
+    - `./gradlew clean build -PbuildTarget=paper-1.21-plus`
+  - Build both:
+    - `build-all.bat` (Windows)
+    - `./build-all.sh` (Linux/macOS)
+    - `powershell -ExecutionPolicy Bypass -File .\build-versions.ps1`
+  - Output artifacts:
+    - `dist/InvBackup-paper-1.18-1.20.jar`
+    - `dist/InvBackup-paper-1.21-plus.jar`
 
 - **Installation**
-  1. Put the built `InvBackup-<version>.jar` into your server `plugins/` folder.
+  1. Put the correct built jar into your server `plugins/` folder.
   2. Start the server to generate default config and language files:
      - `plugins/InvBackup/config.yml`
      - `plugins/InvBackup/lang/*.yml`
@@ -374,4 +386,3 @@ Under `plugins/InvBackup/`:
 
 This project is released under the license described in the repository’s `LICENSE` file.  
 Please review the terms before using, redistributing, or integrating this plugin in commercial environments.
-

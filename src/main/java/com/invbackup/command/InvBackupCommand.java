@@ -45,24 +45,63 @@ public class InvBackupCommand implements CommandExecutor {
         String sub = args[0].toLowerCase();
 
         switch (sub) {
-            case "save" -> handleSave(sender, args);
-            case "list" -> handleList(sender, args);
-            case "preview" -> handlePreview(sender, args);
-            case "restore" -> handleRestore(sender, args);
-            case "forcerestore" -> handleForceRestore(sender, args);
-            case "accept" -> handleAccept(sender, args);
-            case "decline" -> handleDecline(sender, args);
-            case "revoke" -> handleRevoke(sender, args);
-            case "delete" -> handleDelete(sender, args);
-            case "saveall" -> handleSaveAll(sender, args);
-            case "import" -> handleImport(sender, args);
-            case "export" -> handleExport(sender, args);
-            case "exportjson" -> handleExportJson(sender, args);
-            case "migrate" -> handleMigrate(sender, args);
-            case "search" -> handleSearch(sender, args);
-            case "gui" -> handleGui(sender);
-            case "reload" -> handleReload(sender);
-            default -> sendHelp(sender);
+            case "save":
+                handleSave(sender, args);
+                break;
+            case "list":
+                handleList(sender, args);
+                break;
+            case "preview":
+                handlePreview(sender, args);
+                break;
+            case "restore":
+                handleRestore(sender, args);
+                break;
+            case "forcerestore":
+                handleForceRestore(sender, args);
+                break;
+            case "accept":
+                handleAccept(sender, args);
+                break;
+            case "decline":
+                handleDecline(sender, args);
+                break;
+            case "revoke":
+                handleRevoke(sender, args);
+                break;
+            case "delete":
+                handleDelete(sender, args);
+                break;
+            case "saveall":
+                handleSaveAll(sender, args);
+                break;
+            case "import":
+                handleImport(sender, args);
+                break;
+            case "export":
+                handleExport(sender, args);
+                break;
+            case "exportjson":
+                handleExportJson(sender, args);
+                break;
+            case "migrate":
+                handleMigrate(sender, args);
+                break;
+            case "search":
+                handleSearch(sender, args);
+                break;
+            case "gui":
+                handleGui(sender);
+                break;
+            case "web":
+                handleWeb(sender, args);
+                break;
+            case "reload":
+                handleReload(sender);
+                break;
+            default:
+                sendHelp(sender);
+                break;
         }
 
         return true;
@@ -348,7 +387,7 @@ public class InvBackupCommand implements CommandExecutor {
         }
 
         if (restoreLevel == null) {
-            var config = plugin.getBackupManager().loadBackupConfig(
+            org.bukkit.configuration.file.YamlConfiguration config = plugin.getBackupManager().loadBackupConfig(
                     target.getUniqueId().toString(), snapshotId);
             restoreLevel = config != null
                     ? config.getString("meta.backup-level", "minimal")
@@ -860,6 +899,90 @@ public class InvBackupCommand implements CommandExecutor {
         plugin.getCategoryGui().openCategoryMenu(player);
     }
 
+    // ========== web ==========
+
+    private void handleWeb(CommandSender sender, String[] args) {
+        if (!sender.hasPermission("invbackup.admin")) {
+            sender.sendMessage(plugin.getMessage("no-permission"));
+            return;
+        }
+
+        if (!plugin.getConfig().getBoolean("web.enabled", false)) {
+            sender.sendMessage(Component.text(
+                    "InvBackup web UI is disabled (web.enabled=false).",
+                    NamedTextColor.RED));
+            return;
+        }
+
+        boolean revealToken = args.length >= 2 && "token".equalsIgnoreCase(args[1]);
+        com.invbackup.web.EmbeddedWebServer webServer = plugin.getEmbeddedWebServer();
+        boolean running = webServer != null && webServer.isRunning();
+
+        String baseUrl;
+        if (running) {
+            baseUrl = webServer.getBaseUrl();
+        } else {
+            String host = plugin.getConfig().getString("web.host", "127.0.0.1");
+            int port = plugin.getConfig().getInt("web.port", 5800);
+            baseUrl = "http://" + host + ":" + port + "/";
+        }
+
+        sender.sendMessage(Component.text("InvBackup Web UI: ",
+                        NamedTextColor.GREEN)
+                .append(Component.text(baseUrl, NamedTextColor.AQUA)));
+
+        boolean authEnabled = running
+                ? webServer.isAuthEnabled()
+                : plugin.getConfig().getBoolean("web.auth.enabled", true);
+        if (authEnabled) {
+            sender.sendMessage(Component.text(
+                    "Auth header: X-InvBackup-Token",
+                    NamedTextColor.YELLOW));
+
+            if (revealToken) {
+                String token = running
+                        ? webServer.getAuthToken()
+                        : plugin.getConfig().getString("web.auth.token", "");
+                if (token == null || token.isBlank()) {
+                    sender.sendMessage(Component.text(
+                            "Auth token is empty. Set web.auth.token in config.yml and run /ib reload.",
+                            NamedTextColor.RED));
+                } else {
+                    sender.sendMessage(Component.text(
+                            "Auth token: " + token,
+                            NamedTextColor.GOLD));
+                    sender.sendMessage(Component.text(
+                            "Quick URL: " + baseUrl + "?token=" + token,
+                            NamedTextColor.GRAY));
+                }
+            } else {
+                sender.sendMessage(Component.text(
+                        "Token is hidden. Use /ib web token to print it.",
+                        NamedTextColor.GRAY));
+            }
+
+            if (running && webServer.isUsingGeneratedAuthToken()) {
+                sender.sendMessage(Component.text(
+                        "Current token is runtime-generated because web.auth.token is empty.",
+                        NamedTextColor.RED));
+                sender.sendMessage(Component.text(
+                        "Set web.auth.token in config.yml and run /ib reload to make it persistent.",
+                        NamedTextColor.RED));
+            }
+        } else {
+            sender.sendMessage(Component.text(
+                    "Auth disabled. Anyone with access to this address can read backups.",
+                    NamedTextColor.RED));
+        }
+
+        if (plugin.getEmbeddedWebServer() == null
+                || !plugin.getEmbeddedWebServer().isRunning()) {
+            sender.sendMessage(Component.text(
+                    "Web server is not running. Try /ib reload to restart it.",
+                    NamedTextColor.RED));
+        }
+    }
+
     // ========== reload ==========
 
     private void handleReload(CommandSender sender) {
@@ -872,6 +995,7 @@ public class InvBackupCommand implements CommandExecutor {
         plugin.getLanguageManager().reload();
         plugin.getIdentityManager().reload();
         plugin.restartAutoSaveTask();
+        plugin.restartEmbeddedWebServer();
         sender.sendMessage(plugin.getMessage("reload-success"));
     }
 
@@ -915,6 +1039,8 @@ public class InvBackupCommand implements CommandExecutor {
                     "Migrate UUID"));
             sender.sendMessage(helpLine("/ib search <name>",
                     "Search by player name"));
+            sender.sendMessage(helpLine("/ib web [token]",
+                    "Show embedded web UI URL"));
             sender.sendMessage(helpLine("/ib reload", "Reload config"));
         }
     }

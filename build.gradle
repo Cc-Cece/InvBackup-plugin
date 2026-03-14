@@ -4,11 +4,37 @@ plugins {
 }
 
 group = "com.invbackup"
-version = "1.0.1"
+version = "1.0.2"
+
+// Two release channels:
+// paper-1.18-1.20: Paper 1.18.x - 1.20.x (Java 17, api-version 1.18)
+// paper-1.21-plus: Paper 1.21.x+         (Java 21, api-version 1.21)
+def rawTarget = (project.findProperty("buildTarget")
+        ?: project.findProperty("mcProfile")
+        ?: project.findProperty("mcVersion")
+        ?: "paper-1.18-1.20").toString().toLowerCase(Locale.ROOT)
+
+def normalizedTarget
+if (rawTarget in ["paper-1.18-1.20", "1.18", "1.19", "1.20", "core", "legacy"]) {
+    normalizedTarget = "paper-1.18-1.20"
+} else if (rawTarget in ["paper-1.21-plus", "paper-1.21+", "paper-1.21", "1.21", "1.21plus", "plus", "modern"]) {
+    normalizedTarget = "paper-1.21-plus"
+} else {
+    throw new GradleException(
+            "Unsupported buildTarget '${rawTarget}'. Use buildTarget=paper-1.18-1.20 or buildTarget=paper-1.21-plus.")
+}
+
+def javaTarget = normalizedTarget == "paper-1.21-plus"
+        ? JavaVersion.VERSION_21
+        : JavaVersion.VERSION_17
+def paperApi = normalizedTarget == "paper-1.21-plus"
+        ? "1.21.4-R0.1-SNAPSHOT"
+        : "1.18.2-R0.1-SNAPSHOT"
+def pluginApiVersion = normalizedTarget == "paper-1.21-plus" ? "1.21" : "1.18"
 
 java {
-    sourceCompatibility = JavaVersion.VERSION_21
-    targetCompatibility = JavaVersion.VERSION_21
+    sourceCompatibility = javaTarget
+    targetCompatibility = javaTarget
 }
 
 repositories {
@@ -20,13 +46,18 @@ repositories {
 }
 
 dependencies {
-    compileOnly 'io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT'
+    compileOnly "io.papermc.paper:paper-api:${paperApi}"
     implementation 'io.papermc:paperlib:1.0.8'
 }
 
 processResources {
     filesMatching("**/plugin.yml") {
-        expand(NAME: rootProject.name, VERSION: version, PACKAGE: rootProject.group.toString())
+        expand(
+            NAME: rootProject.name, 
+            VERSION: version, 
+            PACKAGE: rootProject.group.toString(),
+            API_VERSION: pluginApiVersion
+        )
     }
 }
 

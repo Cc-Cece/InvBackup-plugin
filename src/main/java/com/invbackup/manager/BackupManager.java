@@ -1,18 +1,24 @@
 package com.invbackup.manager;
 
 import com.invbackup.InvBackup;
+import com.invbackup.compat.CompatibilityHelper;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.NamespacedKey;
 import org.bukkit.attribute.Attribute;
+import org.bukkit.attribute.AttributeModifier;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
+import org.bukkit.inventory.EquipmentSlot;
+// EquipmentSlotGroup 是 1.21+ 的API，在1.18中不可用
+// import org.bukkit.inventory.EquipmentSlotGroup;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.Material;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
+import com.google.common.collect.Multimap;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 
@@ -27,11 +33,13 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.HashMap;
 import java.util.UUID;
 import java.util.logging.Level;
 import java.nio.charset.StandardCharsets;
@@ -453,9 +461,33 @@ public class BackupManager {
         config.set("status.total-experience", target.getTotalExperience());
         config.set("status.health", target.getHealth());
 
-        var maxHealthAttr = target.getAttribute(Attribute.MAX_HEALTH);
-        if (maxHealthAttr != null) {
-            config.set("status.max-health", maxHealthAttr.getValue());
+        // 获取最大生命值（兼容1.18-1.21）
+        try {
+            // 使用反射获取最大生命值，避免直接引用可能不存在的常量
+            java.lang.reflect.Field maxHealthField = null;
+            try {
+                // 尝试获取MAX_HEALTH常量（1.16+）
+                maxHealthField = Attribute.class.getField("MAX_HEALTH");
+            } catch (NoSuchFieldException e) {
+                // 如果MAX_HEALTH不存在，尝试其他可能的常量名
+                try {
+                    maxHealthField = Attribute.class.getField("GENERIC_MAX_HEALTH");
+                } catch (NoSuchFieldException e2) {
+                    // 如果都不存在，跳过最大生命值记录
+                    plugin.getLogger().warning("无法找到最大生命值属性常量，跳过记录");
+                }
+            }
+            
+            if (maxHealthField != null) {
+                Attribute maxHealthAttr = (Attribute) maxHealthField.get(null);
+                org.bukkit.attribute.AttributeInstance attributeInstance = target.getAttribute(maxHealthAttr);
+                if (attributeInstance != null) {
+                    config.set("status.max-health", attributeInstance.getValue());
+                }
+            }
+        } catch (Exception e) {
+            // 所有方法都失败，跳过最大生命值记录
+            plugin.getLogger().warning("无法获取玩家最大生命值: " + e.getMessage());
         }
 
         config.set("status.food", target.getFoodLevel());
@@ -551,8 +583,7 @@ public class BackupManager {
         for (String effectStr : config.getStringList("status.effects")) {
             String[] parts = effectStr.split(":");
             if (parts.length == 3) {
-                PotionEffectType type = org.bukkit.Registry.EFFECT.get(
-                        NamespacedKey.minecraft(parts[0]));
+                PotionEffectType type = CompatibilityHelper.getPotionEffect(parts[0]);
                 if (type != null) {
                     target.addPotionEffect(new PotionEffect(type,
                             Integer.parseInt(parts[1]),
@@ -623,6 +654,249 @@ public class BackupManager {
         }
 
         return backups;
+    }
+
+    /**
+     * Resolve a player UUID from web query input.
+     * Accepts:
+     * 1) exact UUID,
+     * 2) exact name match (case-insensitive),
+     * 3) unique partial name / UUID match.
+     */
+    public String resolvePlayerUuidForWeb(String query) {
+        if (query == null || query.isBlank()) {
+            return null;
+        }
+
+        String trimmed = query.trim();
+        try {
+            return UUID.fromString(trimmed).toString();
+        } catch (IllegalArgumentException ignored) {
+        }
+
+        String normalizedQuery = trimmed.toLowerCase(Locale.ROOT);
+        String normalizedUuidLike = normalizedQuery.replace("-", "");
+
+        String exactNameMatch = null;
+        List<String> partialMatches = new ArrayList<>();
+
+        for (String uuid : getAllPlayerUuids()) {
+            String name = resolveStoredPlayerName(uuid);
+            String safeName = name == null ? "" : name.trim();
+            String nameLower = safeName.toLowerCase(Locale.ROOT);
+            String uuidLower = uuid.toLowerCase(Locale.ROOT);
+            String uuidNoDash = uuidLower.replace("-", "");
+
+            if (!safeName.isBlank() && nameLower.equals(normalizedQuery)) {
+                exactNameMatch = uuid;
+                break;
+            }
+
+            boolean partialName = !safeName.isBlank() && nameLower.contains(normalizedQuery);
+            boolean partialUuid = uuidLower.contains(normalizedQuery)
+                    || (!normalizedUuidLike.isBlank()
+                    && uuidNoDash.contains(normalizedUuidLike));
+            if (partialName || partialUuid) {
+                partialMatches.add(uuid);
+            }
+        }
+
+        if (exactNameMatch != null) {
+            return exactNameMatch;
+        }
+        return partialMatches.size() == 1 ? partialMatches.get(0) : null;
+    }
+
+    /**
+     * Resolve a player's display name from stored backup data only (no Bukkit lookup).
+     */
+    public String resolveStoredPlayerName(String uuid) {
+        if (uuid == null || uuid.isBlank()) {
+            return null;
+        }
+
+        String fromHistory = resolveStoredPlayerNameFromFile(
+                new File(historyFolder, uuid + ".yml"), uuid);
+        if (fromHistory != null && !fromHistory.isBlank()) {
+            return fromHistory;
+        }
+
+        String fromCurrent = resolveStoredPlayerNameFromFile(
+                new File(currentFolder, uuid + ".yml"), uuid);
+        if (fromCurrent != null && !fromCurrent.isBlank()) {
+            return fromCurrent;
+        }
+
+        return uuid;
+    }
+
+    /**
+     * List player summaries for the embedded web UI.
+     */
+    public List<WebPlayerSummary> listWebPlayers(String query,
+                                                 int limit,
+                                                 boolean sortByLatest) {
+        String q = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
+        String qUuid = q.replace("-", "");
+
+        List<WebPlayerSummary> results = new ArrayList<>();
+        for (String uuid : getAllPlayerUuids()) {
+            List<BackupInfo> backups = listBackups(uuid, null);
+            if (backups.isEmpty()) {
+                continue;
+            }
+
+            long latestTimestamp = 0L;
+            String latestSnapshotId = backups.get(0).snapshotId;
+            for (BackupInfo info : backups) {
+                if (info.timestamp >= latestTimestamp) {
+                    latestTimestamp = info.timestamp;
+                    latestSnapshotId = info.snapshotId;
+                }
+            }
+
+            String name = resolveStoredPlayerName(uuid);
+            if ((name == null || name.isBlank()) && !backups.isEmpty()) {
+                name = backups.get(0).targetName;
+            }
+            if (name == null || name.isBlank()) {
+                name = uuid;
+            }
+
+            if (!q.isBlank()) {
+                String nameLower = name.toLowerCase(Locale.ROOT);
+                String uuidLower = uuid.toLowerCase(Locale.ROOT);
+                String uuidNoDash = uuidLower.replace("-", "");
+                boolean matches = nameLower.contains(q)
+                        || uuidLower.contains(q)
+                        || (!qUuid.isBlank() && uuidNoDash.contains(qUuid));
+                if (!matches) {
+                    continue;
+                }
+            }
+
+            WebPlayerSummary summary = new WebPlayerSummary();
+            summary.uuid = uuid;
+            summary.name = name;
+            summary.snapshotCount = backups.size();
+            summary.latestTimestamp = latestTimestamp;
+            summary.latestSnapshotId = latestSnapshotId;
+            results.add(summary);
+        }
+
+        if (sortByLatest) {
+            results.sort(Comparator
+                    .comparingLong((WebPlayerSummary p) -> p.latestTimestamp)
+                    .reversed()
+                    .thenComparing(p -> p.name == null ? "" : p.name,
+                            String.CASE_INSENSITIVE_ORDER)
+                    .thenComparing(p -> p.uuid));
+        } else {
+            results.sort(Comparator
+                    .comparing((WebPlayerSummary p) -> p.name == null ? "" : p.name,
+                            String.CASE_INSENSITIVE_ORDER)
+                    .thenComparing(p -> p.uuid));
+        }
+
+        if (limit > 0 && results.size() > limit) {
+            return new ArrayList<>(results.subList(0, limit));
+        }
+        return results;
+    }
+
+    /**
+     * List snapshot summaries for one player for the embedded web UI.
+     */
+    public List<WebSnapshotSummary> listWebSnapshots(String uuid, int limit) {
+        if (uuid == null || uuid.isBlank()) {
+            return List.of();
+        }
+
+        List<BackupInfo> backups = listBackups(uuid, null);
+        backups.sort(Comparator
+                .comparingLong((BackupInfo b) -> b.timestamp)
+                .reversed()
+                .thenComparing((BackupInfo b) -> b.snapshotId, Comparator.reverseOrder()));
+
+        List<WebSnapshotSummary> result = new ArrayList<>();
+        for (BackupInfo info : backups) {
+            WebSnapshotSummary s = new WebSnapshotSummary();
+            s.snapshotId = info.snapshotId;
+            s.source = info.source;
+            s.targetName = info.targetName;
+            s.triggeredBy = info.triggeredBy;
+            s.triggerType = info.triggerType;
+            s.label = info.label;
+            s.timestamp = info.timestamp;
+            s.backupLevel = info.backupLevel;
+            result.add(s);
+        }
+
+        if (limit > 0 && result.size() > limit) {
+            return new ArrayList<>(result.subList(0, limit));
+        }
+        return result;
+    }
+
+    /**
+     * Build web JSON payload (player + snapshot) for a specific snapshot.
+     */
+    public Map<String, Object> getWebSnapshotPayload(String uuid, String snapshotId) {
+        if (uuid == null || uuid.isBlank()
+                || snapshotId == null || snapshotId.isBlank()) {
+            return null;
+        }
+
+        YamlConfiguration config = loadBackupConfig(uuid, snapshotId);
+        if (config == null) {
+            return null;
+        }
+
+        String playerName = resolveStoredPlayerName(uuid);
+        if (playerName == null || playerName.isBlank()) {
+            playerName = config.getString("meta.target", uuid);
+        }
+
+        Map<String, Object> player = new LinkedHashMap<>();
+        player.put("uuid", uuid);
+        player.put("name", playerName);
+
+        Map<String, Object> root = new LinkedHashMap<>();
+        root.put("player", player);
+        root.put("snapshot",
+                buildSnapshotJsonFromFlatConfig(config, snapshotId, uuid, playerName));
+        return root;
+    }
+
+    private String resolveStoredPlayerNameFromFile(File dataFile, String uuid) {
+        if (!dataFile.exists() || !dataFile.isFile()) {
+            return null;
+        }
+
+        YamlConfiguration config = YamlConfiguration.loadConfiguration(dataFile);
+        String name = config.getString("player-name");
+        if (name != null && !name.isBlank()) {
+            return name;
+        }
+
+        ConfigurationSection snapshots = config.getConfigurationSection("snapshots");
+        if (snapshots == null) {
+            return null;
+        }
+
+        List<String> keys = new ArrayList<>(snapshots.getKeys(false));
+        keys.sort(Comparator.reverseOrder());
+        for (String key : keys) {
+            ConfigurationSection sec = snapshots.getConfigurationSection(key);
+            if (sec == null) {
+                continue;
+            }
+            String target = sec.getString("meta.target");
+            if (target != null && !target.isBlank()) {
+                return target;
+            }
+        }
+        return uuid;
     }
 
     // ========== Load config ==========
@@ -1335,8 +1609,47 @@ public class BackupManager {
                 });
                 obj.put("enchantments", ench);
             }
+            if (meta.hasItemFlag(org.bukkit.inventory.ItemFlag.HIDE_ENCHANTS)
+                    || !meta.getItemFlags().isEmpty()) {
+                List<String> flags = new ArrayList<>();
+                meta.getItemFlags().forEach(flag -> flags.add(flag.name()));
+                obj.put("itemFlags", flags);
+            }
+            if (meta.hasCustomModelData()) {
+                obj.put("customModelData", meta.getCustomModelData());
+            }
+
+            Multimap<Attribute, AttributeModifier> modifiers = meta.getAttributeModifiers();
+            if (modifiers != null && !modifiers.isEmpty()) {
+                List<Map<String, Object>> list = new ArrayList<>();
+                for (Map.Entry<Attribute, AttributeModifier> entry : modifiers.entries()) {
+                    Attribute attribute = entry.getKey();
+                    AttributeModifier modifier = entry.getValue();
+                    if (attribute == null || modifier == null) {
+                        continue;
+                    }
+                    Map<String, Object> node = new LinkedHashMap<>();
+                    node.put("attribute", attribute.getKey().toString());
+                    node.put("amount", modifier.getAmount());
+                    node.put("operation", modifier.getOperation().name());
+                    node.put("name", modifier.getName());
+
+                    String slotInfo = resolveModifierSlot(modifier);
+                    if (slotInfo != null && !slotInfo.isBlank()) {
+                        node.put("slot", slotInfo);
+                    }
+                    list.add(node);
+                }
+                if (!list.isEmpty()) {
+                    obj.put("attributeModifiers", list);
+                }
+            }
         }
         return obj;
+    }
+
+    private String resolveModifierSlot(AttributeModifier modifier) {
+        return CompatibilityHelper.getModifierSlot(modifier);
     }
 
     /** Very small JSON writer for the limited structures we build here. */
@@ -2110,6 +2423,25 @@ public class BackupManager {
         public String targetName;
         public String triggeredBy;
         public String triggeredByUuid;
+        public String triggerType;
+        public String label;
+        public long timestamp;
+        public String backupLevel;
+    }
+
+    public static class WebPlayerSummary {
+        public String uuid;
+        public String name;
+        public int snapshotCount;
+        public long latestTimestamp;
+        public String latestSnapshotId;
+    }
+
+    public static class WebSnapshotSummary {
+        public String snapshotId;
+        public String source;
+        public String targetName;
+        public String triggeredBy;
         public String triggerType;
         public String label;
         public long timestamp;
