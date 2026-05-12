@@ -3,13 +3,7 @@ name: Build and Release
 on:
   push:
     tags:
-      - 'v*'
-  workflow_dispatch:
-    inputs:
-      tag_name:
-        description: 'Release tag (example: v1.0.3)'
-        required: true
-        type: string
+      - '*'
 
 permissions:
   contents: write
@@ -58,6 +52,8 @@ jobs:
     outputs:
       tag_name: ${{ steps.meta.outputs.tag_name }}
       release_name: ${{ steps.meta.outputs.release_name }}
+      is_prerelease: ${{ steps.meta.outputs.is_prerelease }}
+      is_snapshot: ${{ steps.meta.outputs.is_snapshot }}
 
     steps:
       - name: Checkout repository
@@ -76,13 +72,19 @@ jobs:
       - name: Resolve release metadata
         id: meta
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG="${{ github.event.inputs.tag_name }}"
-          else
-            TAG="${{ github.ref_name }}"
-          fi
+          TAG="${{ github.ref_name }}"
           echo "tag_name=${TAG}" >> "$GITHUB_OUTPUT"
           echo "release_name=Release ${TAG}" >> "$GITHUB_OUTPUT"
+          if [[ "${TAG}" == v* ]]; then
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+          fi
+          if [[ "${TAG}" == snapshot* ]]; then
+            echo "is_snapshot=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_snapshot=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Prepare dist directory
         run: mkdir -p dist
@@ -119,7 +121,7 @@ jobs:
           tag_name: ${{ needs.build.outputs.tag_name }}
           name: ${{ needs.build.outputs.release_name }}
           draft: false
-          prerelease: false
+          prerelease: ${{ needs.build.outputs.is_prerelease }}
           files: |
             dist/*.jar
         env:
@@ -129,6 +131,7 @@ jobs:
     name: Publish to Modrinth
     runs-on: ubuntu-latest
     needs: [build, release]
+    if: ${{ needs.build.outputs.is_snapshot == 'true' || startsWith(needs.build.outputs.tag_name, 'v') }}
     env:
       MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
       MODRINTH_PROJECT_ID: ${{ vars.MODRINTH_PROJECT_ID }}
@@ -158,9 +161,12 @@ jobs:
           if [[ "${TAG_NAME}" == v* ]]; then
             VERSION_TYPE="release"
             VERSION_BASE="${TAG_NAME#v}"
-          else
+          elif [[ "${TAG_NAME}" == snapshot* ]]; then
             VERSION_TYPE="beta"
             VERSION_BASE="${TAG_NAME}"
+          else
+            echo "Tag ${TAG_NAME} is not eligible for Modrinth publish."
+            exit 0
           fi
 
           paper_legacy=(dist/*-paper-1.18-1.20.jar)
