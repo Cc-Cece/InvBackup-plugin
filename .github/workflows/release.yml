@@ -14,34 +14,64 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  JAVA_VERSION: '21'
+
 jobs:
-  build-and-release:
-    runs-on: ubuntu-latest
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up JDK 21
+      - name: Set up JDK
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: gradle
+
+      - name: Run tests (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon test
+
+      - name: Run tests (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          .\gradlew.bat --no-daemon test
+
+  build:
+    runs-on: ubuntu-latest
+    needs: [test]
+    outputs:
+      tag_name: ${{ steps.meta.outputs.tag_name }}
+      release_name: ${{ steps.meta.outputs.release_name }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
           cache: gradle
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
-
-      - name: Build paper-1.18-1.20
-        run: |
-          ./gradlew clean build -PbuildTarget=paper-1.18-1.20 -x test
-          mkdir -p dist
-          cp build/libs/*.jar dist/InvBackup-paper-1.18-1.20.jar
-
-      - name: Build paper-1.21-plus
-        run: |
-          ./gradlew clean build -PbuildTarget=paper-1.21-plus -x test
-          cp build/libs/*.jar dist/InvBackup-paper-1.21-plus.jar
 
       - name: Resolve release metadata
         id: meta
@@ -51,23 +81,144 @@ jobs:
           else
             TAG="${{ github.ref_name }}"
           fi
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "name=Release $TAG" >> "$GITHUB_OUTPUT"
+          echo "tag_name=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "release_name=Release ${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare dist directory
+        run: mkdir -p dist
+
+      - name: Build paper-1.18-1.20
+        run: |
+          ./gradlew --no-daemon clean build -PbuildTarget=paper-1.18-1.20 -x test
+          cp build/libs/*.jar dist/InvBackup-paper-1.18-1.20.jar
+
+      - name: Build paper-1.21-plus
+        run: |
+          ./gradlew --no-daemon build -PbuildTarget=paper-1.21-plus -x test
+          cp build/libs/*.jar dist/InvBackup-paper-1.21-plus.jar
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: invbackup-release-${{ steps.meta.outputs.tag }}
+          name: invbackup-release-${{ steps.meta.outputs.tag_name }}
           path: dist/*.jar
+
+  release:
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: invbackup-release-${{ needs.build.outputs.tag_name }}
+          path: dist
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.meta.outputs.tag }}
-          name: ${{ steps.meta.outputs.name }}
+          tag_name: ${{ needs.build.outputs.tag_name }}
+          name: ${{ needs.build.outputs.release_name }}
           draft: false
           prerelease: false
           files: |
             dist/*.jar
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-modrinth:
+    name: Publish to Modrinth
+    runs-on: ubuntu-latest
+    needs: [build, release]
+    env:
+      MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+      MODRINTH_PROJECT_ID: ${{ vars.MODRINTH_PROJECT_ID }}
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: invbackup-release-${{ needs.build.outputs.tag_name }}
+          path: dist
+
+      - name: Publish to Modrinth
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          if [[ -z "${MODRINTH_TOKEN:-}" ]]; then
+            echo "::warning::Missing secret MODRINTH_TOKEN, skipping Modrinth publish."
+            exit 0
+          fi
+          if [[ -z "${MODRINTH_PROJECT_ID:-}" ]]; then
+            echo "::warning::Missing repository variable MODRINTH_PROJECT_ID, skipping Modrinth publish."
+            exit 0
+          fi
+
+          TAG_NAME="${{ needs.build.outputs.tag_name }}"
+          if [[ "${TAG_NAME}" == v* ]]; then
+            VERSION_TYPE="release"
+            VERSION_BASE="${TAG_NAME#v}"
+          else
+            VERSION_TYPE="beta"
+            VERSION_BASE="${TAG_NAME}"
+          fi
+
+          paper_legacy=(dist/*-paper-1.18-1.20.jar)
+          paper_modern=(dist/*-paper-1.21-plus.jar)
+          if (( ${#paper_legacy[@]} == 0 || ${#paper_modern[@]} == 0 )); then
+            echo "::error::Missing Modrinth artifacts for publish."
+            exit 1
+          fi
+
+          game_versions="${MODRINTH_GAME_VERSIONS:-}"
+          if [[ -z "${game_versions}" ]]; then
+            game_versions='["1.18.2","1.20.6","1.21.1"]'
+          fi
+
+          upload_modrinth() {
+            local file="$1"
+            local flavor="$2"
+            local version_number="${VERSION_BASE}-${flavor}"
+            local version_title="${VERSION_BASE} (${flavor})"
+
+            local payload
+            payload=$(jq -cn \
+              --arg project_id "${MODRINTH_PROJECT_ID}" \
+              --arg version_number "${version_number}" \
+              --arg name "${version_title}" \
+              --arg version_type "${VERSION_TYPE}" \
+              --argjson loaders '["paper","purpur","spigot","bukkit"]' \
+              --argjson game_versions "${game_versions}" \
+              '{
+                project_id: $project_id,
+                version_number: $version_number,
+                name: $name,
+                version_type: $version_type,
+                loaders: $loaders,
+                game_versions: $game_versions,
+                dependencies: [],
+                featured: false,
+                status: "listed",
+                file_parts: ["file"]
+              }')
+
+            echo "Uploading ${file} as ${version_number} (${VERSION_TYPE})"
+            local response_file
+            response_file="$(mktemp)"
+            local http_code
+            http_code=$(curl -sS -o "${response_file}" -w "%{http_code}" \
+              -X POST "https://api.modrinth.com/v2/version" \
+              -H "Authorization: ${MODRINTH_TOKEN}" \
+              -H "User-Agent: ${GITHUB_REPOSITORY}/actions" \
+              -F "data=${payload}" \
+              -F "file=@${file};type=application/java-archive")
+            if [[ "${http_code}" -lt 200 || "${http_code}" -ge 300 ]]; then
+              echo "::error::Modrinth upload failed with HTTP ${http_code}."
+              cat "${response_file}"
+              exit 1
+            fi
+            rm -f "${response_file}"
+          }
+
+          upload_modrinth "${paper_legacy[0]}" "paper-1.18-1.20"
+          upload_modrinth "${paper_modern[0]}" "paper-1.21-plus"
