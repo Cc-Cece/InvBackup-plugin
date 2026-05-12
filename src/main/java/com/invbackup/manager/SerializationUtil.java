@@ -1,5 +1,6 @@
 package com.invbackup.manager;
 
+import org.bukkit.Bukkit;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.util.io.BukkitObjectInputStream;
@@ -9,6 +10,7 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.Base64;
+import java.util.logging.Logger;
 
 public final class SerializationUtil {
 
@@ -19,13 +21,22 @@ public final class SerializationUtil {
     }
 
     public static String itemStackArrayToBase64(ItemStack[] items) {
+        Logger logger = Bukkit.getLogger();
         try {
             ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
             BukkitObjectOutputStream dataOutput = new BukkitObjectOutputStream(outputStream);
 
             dataOutput.writeInt(items.length);
-            for (ItemStack item : items) {
-                dataOutput.writeObject(item);
+            for (int i = 0; i < items.length; i++) {
+                ItemStack item = items[i];
+                try {
+                    dataOutput.writeObject(item);
+                } catch (Exception e) {
+                    if (logger != null) {
+                        logger.warning("Failed to serialize item at index " + i + ": " + e.getMessage());
+                    }
+                    dataOutput.writeObject(null);
+                }
             }
 
             dataOutput.close();
@@ -36,30 +47,49 @@ public final class SerializationUtil {
     }
 
     public static ItemStack[] itemStackArrayFromBase64(String data) throws IOException {
+        Logger logger = Bukkit.getLogger();
         try {
             ByteArrayInputStream inputStream = new ByteArrayInputStream(DECODER.decode(data));
             BukkitObjectInputStream dataInput = new BukkitObjectInputStream(inputStream);
             ItemStack[] items = new ItemStack[dataInput.readInt()];
 
             for (int i = 0; i < items.length; i++) {
-                items[i] = (ItemStack) dataInput.readObject();
+                try {
+                    Object obj = dataInput.readObject();
+                    items[i] = (obj instanceof ItemStack) ? (ItemStack) obj : null;
+                } catch (ClassNotFoundException e) {
+                    if (logger != null) {
+                        logger.warning("Failed to deserialize item at index " + i + ": " + e.getMessage());
+                    }
+                    items[i] = null;
+                }
             }
 
             dataInput.close();
             return items;
-        } catch (ClassNotFoundException e) {
-            throw new IOException("Unable to decode class type.", e);
+        } catch (IOException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IOException("Unable to decode item stacks.", e);
         }
     }
 
     public static String inventoryToBase64(Inventory inventory) {
+        Logger logger = Bukkit.getLogger();
         try {
             ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
             BukkitObjectOutputStream dataOutput = new BukkitObjectOutputStream(outputStream);
 
             dataOutput.writeInt(inventory.getSize());
             for (int i = 0; i < inventory.getSize(); i++) {
-                dataOutput.writeObject(inventory.getItem(i));
+                try {
+                    dataOutput.writeObject(inventory.getItem(i));
+                } catch (Exception e) {
+                    if (logger != null) {
+                        logger.warning("Failed to serialize inventory item at index " + i + ": " + e.getMessage());
+                    }
+                    dataOutput.writeObject(null);
+                }
             }
 
             dataOutput.close();

@@ -461,33 +461,15 @@ public class BackupManager {
         config.set("status.total-experience", target.getTotalExperience());
         config.set("status.health", target.getHealth());
 
-        // 获取最大生命值（兼容1.18-1.21）
+<<<<<<< HEAD
         try {
-            // 使用反射获取最大生命值，避免直接引用可能不存在的常量
-            java.lang.reflect.Field maxHealthField = null;
-            try {
-                // 尝试获取MAX_HEALTH常量（1.16+）
-                maxHealthField = Attribute.class.getField("MAX_HEALTH");
-            } catch (NoSuchFieldException e) {
-                // 如果MAX_HEALTH不存在，尝试其他可能的常量名
-                try {
-                    maxHealthField = Attribute.class.getField("GENERIC_MAX_HEALTH");
-                } catch (NoSuchFieldException e2) {
-                    // 如果都不存在，跳过最大生命值记录
-                    plugin.getLogger().warning("无法找到最大生命值属性常量，跳过记录");
-                }
-            }
-            
-            if (maxHealthField != null) {
-                Attribute maxHealthAttr = (Attribute) maxHealthField.get(null);
-                org.bukkit.attribute.AttributeInstance attributeInstance = target.getAttribute(maxHealthAttr);
-                if (attributeInstance != null) {
-                    config.set("status.max-health", attributeInstance.getValue());
-                }
+            Double maxHealth = resolveMaxHealthValue(target, true);
+            if (maxHealth != null) {
+                config.set("status.max-health", maxHealth);
             }
         } catch (Exception e) {
-            // 所有方法都失败，跳过最大生命值记录
             plugin.getLogger().warning("无法获取玩家最大生命值: " + e.getMessage());
+        }
         }
 
         config.set("status.food", target.getFoodLevel());
@@ -496,9 +478,28 @@ public class BackupManager {
 
         List<String> effects = new ArrayList<>();
         for (PotionEffect effect : target.getActivePotionEffects()) {
-            effects.add(effect.getType().getKey().getKey()
-                    + ":" + effect.getDuration()
-                    + ":" + effect.getAmplifier());
+            try {
+                PotionEffectType type = effect.getType();
+                if (type == null) {
+                    continue;
+                }
+                String key = null;
+                try {
+                    if (type.getKey() != null) {
+                        key = type.getKey().getKey();
+                    }
+                } catch (NoSuchMethodError | NoClassDefFoundError ignored) {
+                }
+                if (key == null || key.isBlank()) {
+                    key = type.getName();
+                }
+                if (key != null && !key.isBlank()) {
+                    effects.add(key
+                            + ":" + effect.getDuration()
+                            + ":" + effect.getAmplifier());
+                }
+            } catch (Throwable ignored) {
+            }
         }
         config.set("status.effects", effects);
 
@@ -509,6 +510,66 @@ public class BackupManager {
         config.set("status.location.z", loc.getZ());
         config.set("status.location.yaw", (double) loc.getYaw());
         config.set("status.location.pitch", (double) loc.getPitch());
+    }
+
+    private Attribute resolveMaxHealthAttribute(boolean logIfMissing) {
+        Attribute maxHealthAttr = null;
+
+        try {
+            try {
+                maxHealthAttr = Attribute.valueOf("MAX_HEALTH");
+            } catch (IllegalArgumentException ignored) {
+            }
+            if (maxHealthAttr == null) {
+                try {
+                    maxHealthAttr = Attribute.valueOf("GENERIC_MAX_HEALTH");
+                } catch (IllegalArgumentException ignored) {
+                }
+            }
+
+            if (maxHealthAttr == null) {
+                for (Attribute a : Attribute.values()) {
+                    try {
+                        String name = a.name();
+                        if (name != null && name.toLowerCase().contains("max_health")) {
+                            maxHealthAttr = a;
+                            break;
+                        }
+                        try {
+                            if (a.getKey() != null && a.getKey().getKey() != null
+                                    && a.getKey().getKey().endsWith("max_health")) {
+                                maxHealthAttr = a;
+                                break;
+                            }
+                        } catch (NoSuchMethodError | NoClassDefFoundError ignored) {
+                        }
+                    } catch (Throwable ignored) {
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+
+        if (maxHealthAttr == null && logIfMissing) {
+            plugin.getLogger().warning("无法找到最大生命值属性常量，跳过记录");
+        }
+        return maxHealthAttr;
+    }
+
+    private Double resolveMaxHealthValue(Player target, boolean logIfMissing) {
+        Attribute maxHealthAttr = resolveMaxHealthAttribute(logIfMissing);
+        if (maxHealthAttr == null) {
+            return null;
+        }
+        try {
+            org.bukkit.attribute.AttributeInstance attributeInstance =
+                    target.getAttribute(maxHealthAttr);
+            if (attributeInstance != null) {
+                return attributeInstance.getValue();
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
     }
 
     // ========== Restore ==========
@@ -567,7 +628,21 @@ public class BackupManager {
     private void restoreStatusData(Player target, YamlConfiguration config) {
         target.setExp((float) config.getDouble("status.exp"));
         target.setLevel(config.getInt("status.level"));
-        target.setHealth(config.getDouble("status.health"));
+        double health = config.getDouble("status.health");
+        Double maxHealth = resolveMaxHealthValue(target, false);
+        if (maxHealth != null) {
+            health = Math.min(health, maxHealth);
+        }
+        if (health < 0.0d) {
+            health = 0.0d;
+        }
+        try {
+            target.setHealth(health);
+        } catch (IllegalArgumentException e) {
+            if (maxHealth != null) {
+                target.setHealth(Math.min(maxHealth, Math.max(1.0d, health)));
+            }
+        }
         target.setFoodLevel(config.getInt("status.food"));
         target.setSaturation((float) config.getDouble("status.saturation"));
 
@@ -1609,6 +1684,11 @@ public class BackupManager {
                 });
                 obj.put("enchantments", ench);
             }
+<<<<<<< HEAD
+=======
+<<<<<<< HEAD
+=======
+>>>>>>> 1a60de3 (Compat: hybrid servers (Mohist) tolerant serialization and attribute lookup)
             if (meta.hasItemFlag(org.bukkit.inventory.ItemFlag.HIDE_ENCHANTS)
                     || !meta.getItemFlags().isEmpty()) {
                 List<String> flags = new ArrayList<>();
@@ -1629,7 +1709,21 @@ public class BackupManager {
                         continue;
                     }
                     Map<String, Object> node = new LinkedHashMap<>();
+<<<<<<< HEAD
                     node.put("attribute", attribute.getKey().toString());
+=======
+                    String attributeKey = null;
+                    try {
+                        if (attribute.getKey() != null) {
+                            attributeKey = attribute.getKey().toString();
+                        }
+                    } catch (NoSuchMethodError | NoClassDefFoundError ignored) {
+                    }
+                    if (attributeKey == null || attributeKey.isBlank()) {
+                        attributeKey = attribute.name();
+                    }
+                    node.put("attribute", attributeKey);
+>>>>>>> 1a60de3 (Compat: hybrid servers (Mohist) tolerant serialization and attribute lookup)
                     node.put("amount", modifier.getAmount());
                     node.put("operation", modifier.getOperation().name());
                     node.put("name", modifier.getName());
@@ -1644,6 +1738,10 @@ public class BackupManager {
                     obj.put("attributeModifiers", list);
                 }
             }
+<<<<<<< HEAD
+=======
+>>>>>>> d946071 (Compat: hybrid servers (Mohist) tolerant serialization and attribute lookup)
+>>>>>>> 1a60de3 (Compat: hybrid servers (Mohist) tolerant serialization and attribute lookup)
         }
         return obj;
     }
