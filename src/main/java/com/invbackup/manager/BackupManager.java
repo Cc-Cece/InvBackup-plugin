@@ -461,7 +461,6 @@ public class BackupManager {
         config.set("status.total-experience", target.getTotalExperience());
         config.set("status.health", target.getHealth());
 
-<<<<<<< HEAD
         try {
             Double maxHealth = resolveMaxHealthValue(target, true);
             if (maxHealth != null) {
@@ -469,7 +468,6 @@ public class BackupManager {
             }
         } catch (Exception e) {
             plugin.getLogger().warning("无法获取玩家最大生命值: " + e.getMessage());
-        }
         }
 
         config.set("status.food", target.getFoodLevel());
@@ -1684,11 +1682,6 @@ public class BackupManager {
                 });
                 obj.put("enchantments", ench);
             }
-<<<<<<< HEAD
-=======
-<<<<<<< HEAD
-=======
->>>>>>> 1a60de3 (Compat: hybrid servers (Mohist) tolerant serialization and attribute lookup)
             if (meta.hasItemFlag(org.bukkit.inventory.ItemFlag.HIDE_ENCHANTS)
                     || !meta.getItemFlags().isEmpty()) {
                 List<String> flags = new ArrayList<>();
@@ -1709,9 +1702,6 @@ public class BackupManager {
                         continue;
                     }
                     Map<String, Object> node = new LinkedHashMap<>();
-<<<<<<< HEAD
-                    node.put("attribute", attribute.getKey().toString());
-=======
                     String attributeKey = null;
                     try {
                         if (attribute.getKey() != null) {
@@ -1723,7 +1713,6 @@ public class BackupManager {
                         attributeKey = attribute.name();
                     }
                     node.put("attribute", attributeKey);
->>>>>>> 1a60de3 (Compat: hybrid servers (Mohist) tolerant serialization and attribute lookup)
                     node.put("amount", modifier.getAmount());
                     node.put("operation", modifier.getOperation().name());
                     node.put("name", modifier.getName());
@@ -1738,10 +1727,6 @@ public class BackupManager {
                     obj.put("attributeModifiers", list);
                 }
             }
-<<<<<<< HEAD
-=======
->>>>>>> d946071 (Compat: hybrid servers (Mohist) tolerant serialization and attribute lookup)
->>>>>>> 1a60de3 (Compat: hybrid servers (Mohist) tolerant serialization and attribute lookup)
         }
         return obj;
     }
